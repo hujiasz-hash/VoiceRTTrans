@@ -1,0 +1,7 @@
+{
+    "hotkey": "ctrl+v",
+    "ui": {
+        "opacity": 0.85,
+        "always_on_top": true
+    }
+}

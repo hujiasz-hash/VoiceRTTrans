@@ -1,5 +1,5 @@
 {
-    "hotkey": "ctrl+v",
+    "hotkey": "cmd_r+'",
     "ui": {
         "opacity": 0.85,
         "always_on_top": true

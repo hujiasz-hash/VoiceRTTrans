@@ -73,5 +73,9 @@ if sys.platform == 'darwin':
             'CFBundleVersion': '1',
             'NSMicrophoneUsageDescription': 'VoiceRTTrans needs microphone access to record voice.',
             'NSAppleEventsUsageDescription': 'VoiceRTTrans needs to send Apple Events to paste text.',
+            # Allow environment variable access for subprocess
+            'LSEnvironment': {
+                'PATH': '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+            },
         },
     )

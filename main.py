@@ -470,16 +470,22 @@ class VCAIWindow(QWidget):
 
     def _run_osascript(self, script):
         try:
+            # 确保在完整的 shell 环境中执行，包括 PATH
+            env = os.environ.copy()
+            if 'PATH' not in env:
+                env['PATH'] = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'
+            
             result = subprocess.run(
                 ["osascript", "-e", script],
                 check=False,
                 capture_output=True,
                 text=True,
+                env=env,
             )
             stdout = result.stdout.strip()
             stderr = result.stderr.strip()
             if result.returncode != 0:
-                print(f"[PASTE] osascript 失败: {stderr or stdout}")
+                print(f"[PASTE] osascript 失败 (code={result.returncode}): {stderr or stdout}")
             return result.returncode == 0, stdout
         except Exception as e:
             print(f"[PASTE] 调用 osascript 失败: {e}")

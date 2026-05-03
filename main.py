@@ -461,6 +461,7 @@ class VCAIWindow(QWidget):
 
     def load_config(self):
         self.config = json.loads(json.dumps(DEFAULT_CONFIG))
+        loaded_path = None
 
         for candidate in self._resource_candidates("config.json") + self._resource_candidates("config.example.json"):
             if not os.path.exists(candidate):
@@ -468,6 +469,7 @@ class VCAIWindow(QWidget):
             try:
                 with open(candidate, "r", encoding="utf-8") as f:
                     self.config = self._merge_config(self.config, json.load(f))
+                loaded_path = candidate
                 print(f"[CONFIG] 已加载配置: {candidate}")
                 break
             except Exception as e:
@@ -476,6 +478,23 @@ class VCAIWindow(QWidget):
         config_dir = os.path.join(os.path.expanduser("~"), ".voicerttrans")
         os.makedirs(config_dir, exist_ok=True)
         user_config_path = os.path.join(config_dir, "config.json")
+        legacy_seeded_config = {
+            "hotkey": "cmd+r",
+            "ui": {
+                "opacity": 0.85,
+                "always_on_top": True,
+            },
+        }
+
+        if loaded_path == user_config_path and self.config == legacy_seeded_config:
+            self.config = json.loads(json.dumps(DEFAULT_CONFIG))
+            try:
+                with open(user_config_path, "w", encoding="utf-8") as f:
+                    json.dump(self.config, f, ensure_ascii=False, indent=4)
+                print(f"[CONFIG] 已将旧默认热键迁移为新默认值: {user_config_path}")
+            except Exception as e:
+                print(f"[CONFIG] 迁移用户配置失败: {e}")
+
         if not os.path.exists(user_config_path):
             try:
                 with open(user_config_path, "w", encoding="utf-8") as f:

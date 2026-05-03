@@ -28,6 +28,40 @@ from core.audio_stream import AudioRecorder
 from core.llm_client import LLMClient
 from core.stt_client import STTClient
 
+DEFAULT_CONFIG = {
+    "hotkey": "cmd+r",
+    "ui": {
+        "opacity": 0.85,
+        "always_on_top": True,
+    },
+}
+
+if sys.platform == "darwin":
+    try:
+        from AppKit import NSRunningApplication, NSWorkspace
+    except ImportError:
+        NSRunningApplication = None
+        NSWorkspace = None
+
+    try:
+        from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
+    except ImportError:
+        AXIsProcessTrustedWithOptions = None
+        kAXTrustedCheckOptionPrompt = None
+
+    try:
+        from AVFoundation import (
+            AVCaptureDevice,
+            AVMediaTypeAudio,
+            AVAuthorizationStatusAuthorized,
+            AVAuthorizationStatusNotDetermined,
+        )
+    except ImportError:
+        AVCaptureDevice = None
+        AVMediaTypeAudio = None
+        AVAuthorizationStatusAuthorized = None
+        AVAuthorizationStatusNotDetermined = None
+
 class WorkerSignals(QObject):
     """
     专门管理信号的类，确保信号在正确的线程上下文被处理。
@@ -339,18 +373,19 @@ class VCAIWindow(QWidget):
         self.signals.error_occurred.connect(self.on_error)
         self.signals.polish_finished.connect(self.on_polish_finished)
         self.signals.reset_display.connect(self.reset_display)
-        
-        self.hotkey = HotkeyListener(
-            self.config.get("hotkey", "cmd_r+'"),
-            self.on_hotkey_press_worker,
-            self.on_hotkey_release_worker
-        )
-        self.hotkey.start()
-        
+
+        self.hotkey = None
         self.trans_thread = None
         self.polish_thread = None
         self.target_app_name = None
         self.target_bundle_id = None
+        self.target_pid = None
+
+        if sys.platform != "darwin" or self._has_accessibility_permission():
+            self._start_hotkey_listener()
+        else:
+            self.signals.status_update.emit("首次启动请允许“辅助功能”权限，授权后热键即可生效")
+            threading.Thread(target=self._bootstrap_macos_permissions, daemon=True).start()
 
         # 后台发送 warmup 请求，触发 MLX JIT 编译，消除首次推理的冷启动延迟
         threading.Thread(target=self._warmup_llm, daemon=True).start()
@@ -370,12 +405,168 @@ class VCAIWindow(QWidget):
         except Exception as e:
             print(f"[WARMUP] LLM 预热失败 (不影响使用): {e}")
 
+    def _resource_candidates(self, filename):
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates = [
+            os.path.join(os.path.expanduser("~"), ".voicerttrans", filename),
+            os.path.join(os.getcwd(), filename),
+            os.path.join(base_dir, filename),
+        ]
+        if getattr(sys, "_MEIPASS", None):
+            candidates.append(os.path.join(sys._MEIPASS, filename))
+        return candidates
+
+    def _normalize_hotkey(self, hotkey_value):
+        if not isinstance(hotkey_value, str):
+            return DEFAULT_CONFIG["hotkey"]
+
+        hotkey = hotkey_value.strip().lower().replace(" ", "")
+        hotkey = hotkey.replace("right_option", "alt_r")
+        hotkey = hotkey.replace("command", "cmd").replace("option", "alt")
+        hotkey = hotkey.replace("alt_r+", "__ALT_R__+")
+        hotkey = hotkey.replace("cmd_", "cmd+").replace("ctrl_", "ctrl+")
+        hotkey = hotkey.replace("alt_", "alt+").replace("shift_", "shift+")
+        hotkey = hotkey.replace("__ALT_R__+", "alt_r+")
+
+        if "'" in hotkey or hotkey.endswith("+"):
+            return DEFAULT_CONFIG["hotkey"]
+
+        parts = [part for part in hotkey.split("+") if part]
+        if len(parts) < 2:
+            return DEFAULT_CONFIG["hotkey"]
+
+        valid_modifiers = {"cmd", "ctrl", "alt", "alt_r", "right_option", "shift"}
+        modifiers = parts[:-1]
+        target_key = parts[-1]
+        if any(modifier not in valid_modifiers for modifier in modifiers):
+            return DEFAULT_CONFIG["hotkey"]
+        if len(target_key) != 1 or not re.match(r"[a-z0-9/]", target_key):
+            return DEFAULT_CONFIG["hotkey"]
+        return "+".join(modifiers + [target_key])
+
+    def _merge_config(self, base_config, incoming_config):
+        if not isinstance(incoming_config, dict):
+            return base_config
+
+        merged = {
+            "hotkey": self._normalize_hotkey(incoming_config.get("hotkey", base_config["hotkey"])),
+            "ui": dict(base_config.get("ui", {})),
+        }
+        if isinstance(incoming_config.get("ui"), dict):
+            merged["ui"].update(incoming_config["ui"])
+        return merged
+
     def load_config(self):
+        self.config = json.loads(json.dumps(DEFAULT_CONFIG))
+
+        for candidate in self._resource_candidates("config.json") + self._resource_candidates("config.example.json"):
+            if not os.path.exists(candidate):
+                continue
+            try:
+                with open(candidate, "r", encoding="utf-8") as f:
+                    self.config = self._merge_config(self.config, json.load(f))
+                print(f"[CONFIG] 已加载配置: {candidate}")
+                break
+            except Exception as e:
+                print(f"[CONFIG] 读取配置失败: {candidate}: {e}")
+
+        config_dir = os.path.join(os.path.expanduser("~"), ".voicerttrans")
+        os.makedirs(config_dir, exist_ok=True)
+        user_config_path = os.path.join(config_dir, "config.json")
+        if not os.path.exists(user_config_path):
+            try:
+                with open(user_config_path, "w", encoding="utf-8") as f:
+                    json.dump(self.config, f, ensure_ascii=False, indent=4)
+                print(f"[CONFIG] 已写入默认用户配置: {user_config_path}")
+            except Exception as e:
+                print(f"[CONFIG] 写入用户配置失败: {e}")
+
+    def _has_accessibility_permission(self):
+        if sys.platform != "darwin" or AXIsProcessTrustedWithOptions is None:
+            return True
         try:
-            with open("config.json", "r") as f:
-                self.config = json.load(f)
-        except:
-            self.config = {"hotkey": "cmd_r+'", "ui": {"opacity": 0.85}}
+            return bool(AXIsProcessTrustedWithOptions({}))
+        except Exception as e:
+            print(f"[PERM] 检查辅助功能权限失败: {e}")
+            return False
+
+    def _request_accessibility_permission(self):
+        if sys.platform != "darwin" or AXIsProcessTrustedWithOptions is None or kAXTrustedCheckOptionPrompt is None:
+            return True
+        try:
+            return bool(AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True}))
+        except Exception as e:
+            print(f"[PERM] 请求辅助功能权限失败: {e}")
+            return False
+
+    def _request_microphone_permission(self):
+        if sys.platform != "darwin" or AVCaptureDevice is None or AVMediaTypeAudio is None:
+            return True
+
+        try:
+            status = AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio)
+            if status == AVAuthorizationStatusAuthorized:
+                return True
+            if status != AVAuthorizationStatusNotDetermined:
+                return False
+
+            granted_holder = {"value": False}
+            done = threading.Event()
+
+            def completion(granted):
+                granted_holder["value"] = bool(granted)
+                done.set()
+
+            AVCaptureDevice.requestAccessForMediaType_completionHandler_(AVMediaTypeAudio, completion)
+            done.wait(10)
+            return granted_holder["value"]
+        except Exception as e:
+            print(f"[PERM] 请求麦克风权限失败: {e}")
+            return False
+
+    def _prime_automation_permission(self):
+        if sys.platform != "darwin":
+            return True
+        ok, _ = self._run_osascript('tell application "System Events" to count processes')
+        return ok
+
+    def _bootstrap_macos_permissions(self):
+        time.sleep(0.3)
+        mic_ok = self._request_microphone_permission()
+        access_ok = self._request_accessibility_permission()
+        time.sleep(0.3)
+        automation_ok = self._prime_automation_permission()
+
+        if access_ok:
+            self._start_hotkey_listener()
+        else:
+            self.signals.status_update.emit("请在系统设置中允许“辅助功能”，然后重新打开应用")
+            return
+
+        if not mic_ok:
+            self.signals.status_update.emit("请允许麦克风权限，否则无法录音")
+            return
+
+        if not automation_ok:
+            self.signals.status_update.emit("请允许自动化/System Events 权限，否则无法自动粘贴")
+            return
+
+        self.signals.status_update.emit("准备就绪")
+
+    def _start_hotkey_listener(self):
+        if self.hotkey is not None:
+            return
+        try:
+            self.hotkey = HotkeyListener(
+                self.config.get("hotkey", DEFAULT_CONFIG["hotkey"]),
+                self.on_hotkey_press_worker,
+                self.on_hotkey_release_worker,
+            )
+            self.hotkey.start()
+        except Exception as e:
+            self.hotkey = None
+            print(f"[HOTKEY] 启动热键监听失败: {e}")
+            self.signals.status_update.emit("热键监听启动失败，请检查权限和配置")
 
     def init_ui(self):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool | Qt.WindowType.WindowDoesNotAcceptFocus)
@@ -419,7 +610,7 @@ class VCAIWindow(QWidget):
         self._capture_target_app()
         self.ui_visibility_signal.emit(True)
         self.signals.reset_display.emit()
-        hk_str = self.config.get("hotkey", "cmd_r+'").upper()
+        hk_str = self.config.get("hotkey", DEFAULT_CONFIG["hotkey"]).upper()
         self.signals.status_update.emit(f"正在录音 (松开 {hk_str} 停止)...")
         # 清空文本需通过信号或在 UI 线程处理。这里简单点，直接在 press 时清空（因为 press 时 UI 线程会响应信号显示）
         # 但为了极度安全，我们把清空也发出去，或者在 safe_show 里做。
@@ -494,6 +685,20 @@ class VCAIWindow(QWidget):
     def _capture_target_app(self):
         if sys.platform != "darwin":
             return
+        if NSWorkspace is not None:
+            try:
+                front_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+                if front_app is not None:
+                    self.target_app_name = front_app.localizedName() or None
+                    self.target_bundle_id = front_app.bundleIdentifier() or None
+                    self.target_pid = int(front_app.processIdentifier())
+                    print(
+                        f"[PASTE] 记录目标应用: {self.target_app_name} "
+                        f"({self.target_bundle_id or 'no-bundle'}, pid={self.target_pid})"
+                    )
+                    return
+            except Exception as e:
+                print(f"[PASTE] AppKit 获取目标应用失败: {e}")
         ok, output = self._run_osascript(
             'tell application "System Events"\n'
             'set frontApp to first application process whose frontmost is true\n'
@@ -510,11 +715,20 @@ class VCAIWindow(QWidget):
             app_name, bundle_id = output.split("|", 1)
             self.target_app_name = app_name or None
             self.target_bundle_id = bundle_id or None
+            self.target_pid = None
             print(f"[PASTE] 记录目标应用: {self.target_app_name} ({self.target_bundle_id or 'no-bundle'})")
 
     def _restore_target_app(self):
         if sys.platform != "darwin":
             return False
+        if self.target_pid and NSRunningApplication is not None:
+            try:
+                app = NSRunningApplication.runningApplicationWithProcessIdentifier_(self.target_pid)
+                if app is not None and app.activateWithOptions_(1):
+                    print(f"[PASTE] 已恢复目标应用 PID: {self.target_pid}")
+                    return True
+            except Exception as e:
+                print(f"[PASTE] AppKit 恢复目标应用失败: {e}")
         if self.target_bundle_id:
             ok, _ = self._run_osascript(f'tell application id "{self.target_bundle_id}" to activate')
             if ok:

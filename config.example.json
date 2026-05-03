@@ -1,0 +1,7 @@
+{
+    "hotkey": "cmd+r",
+    "ui": {
+        "opacity": 0.85,
+        "always_on_top": true
+    }
+}

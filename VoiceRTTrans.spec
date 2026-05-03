@@ -16,6 +16,8 @@ a = Analysis(
         'pynput',
         'pynput.keyboard',
         'pynput.keyboard._darwin',
+        'pynput._util.darwin',
+        'pynput._util.darwin_vks',
         'PyQt6',
         'PyQt6.QtWidgets',
         'PyQt6.QtCore',
@@ -52,7 +54,7 @@ if sys.platform == 'darwin':
         disable_windowed_traceback=False,
         target_arch=None,
         codesign_identity=None,
-        entitlements_file=None,
+        entitlements_file='entitlements.plist',
         icon=None,
     )
 
@@ -72,11 +74,13 @@ if sys.platform == 'darwin':
         name='VoiceRTTrans.app',
         icon=None,
         bundle_identifier='com.voicerttrans.app',
+        entitlements_file='entitlements.plist',
         info_plist={
             'NSPrincipalClass': 'NSApplication',
             'NSHighResolutionCapable': 'True',
             'NSRequiresIPhoneOS': False,
             'LSBackgroundOnly': False,
+            'LSUIElement': True,
             'CFBundleDisplayName': 'VoiceRTTrans',
             'CFBundleShortVersionString': '0.1.0',
             'CFBundleVersion': '1',

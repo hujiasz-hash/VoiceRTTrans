@@ -11,11 +11,11 @@ class HotkeyListener:
         self.on_press_callback = on_press_callback
         self.on_release_callback = on_release_callback
         self.pressed = False
-        
+
         self.target_modifiers = set()
         self.target_char = None
         self.target_vks = set()
-        
+
         for part in self.key_str.split('+'):
             part = part.strip()
             if part in ['ctrl', 'cmd', 'command', 'cmd_r', 'right_command', 'alt', 'option', 'alt_r', 'right_option', 'shift']:
@@ -33,12 +33,15 @@ class HotkeyListener:
                 vk for vk, symbol in DARWIN_SYMBOLS.items()
                 if symbol == self.target_char
             }
-            
+
         self.current_modifiers = set()
         self.char_pressed = False
-        self.listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
-        
-        # Mac 上的 Option + 字符 映射表
+        self.listener = keyboard.Listener(
+            on_press=self._on_press,
+            on_release=self._on_release,
+            intercept=self._intercept,
+        )
+
         self.mac_option_map = {
             '/': ['/', '÷'],
             'v': ['v', '√'],
@@ -94,18 +97,23 @@ class HotkeyListener:
         self._check_state()
 
     def _check_state(self):
-        # 检查修饰键是否全部满足 (当前按下的修饰键包含目标修饰键)
         mods_match = self.target_modifiers.issubset(self.current_modifiers)
         char_match = self.char_pressed if self.target_char else True
-        
+
         is_match = mods_match and char_match
-        
+
         if is_match and not self.pressed:
             self.pressed = True
             self.on_press_callback()
         elif not is_match and self.pressed:
             self.pressed = False
             self.on_release_callback()
+
+    def _intercept(self, event_type, event):
+        # Suppress all keyboard events while the hotkey is fully active
+        if self.pressed:
+            return None
+        return event
 
     def start(self):
         self.listener.start()

@@ -8,6 +8,7 @@ import time
 import threading
 import subprocess
 import re
+import logging
 from difflib import SequenceMatcher
 
 # 尝试关闭终端对控制字符（如 ^V）的默认回显
@@ -20,13 +21,43 @@ try:
 except Exception:
     pass
 
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QTextEdit, QLabel
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QTextEdit, QLabel,
+    QSystemTrayIcon, QMenu,
+)
+from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, pyqtSlot
 
 from core.hotkey import HotkeyListener
 from core.audio_stream import AudioRecorder
 from core.llm_client import LLMClient
 from core.stt_client import STTClient
+
+
+def _setup_logging():
+    log_dir = os.path.join(os.path.expanduser("~"), ".voicerttrans")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "app.log")
+
+    logger = logging.getLogger("voicerttrans")
+    logger.setLevel(logging.DEBUG)
+
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    file_handler.setFormatter(file_fmt)
+    logger.addHandler(file_handler)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_fmt = logging.Formatter("[%(levelname)s] %(message)s")
+    console_handler.setFormatter(console_fmt)
+    logger.addHandler(console_handler)
+
+    return logger
+
+
+log = _setup_logging()
 
 DEFAULT_CONFIG = {
     "hotkey": "cmd_r+'",
@@ -85,7 +116,7 @@ class TranscriptionThread(QThread):
     def run(self):
         self.recorder.start()
         self.audio_buffer = []
-        
+
         # 启动一个后台子线程，专门用来在录音期间不断发送累积的音频
         def process_audio_continuously():
             last_length = 0
@@ -116,7 +147,7 @@ class TranscriptionThread(QThread):
                     if not self.is_running: break
             except:
                 break
-        
+
         worker_thread.join()
 
         # 录音结束后，发送最后一次完整的音频进行最终确认
@@ -129,7 +160,7 @@ class TranscriptionThread(QThread):
                 for chunk_text in self.stt_client.recognize_audio_stream(audio_data):
                     full_text += chunk_text
                     self.signals.raw_text_update.emit(full_text)
-                print(f"[TIMING] STT 最终识别耗时: {time.time() - stt_start:.2f}s")
+                log.info(f"STT 最终识别耗时: {time.time() - stt_start:.2f}s")
                 self.signals.raw_text_ready.emit(full_text)
             except Exception as e:
                 self.signals.error_occurred.emit(f"STT 错误: {str(e)}")
@@ -151,8 +182,8 @@ class PolishThread(QThread):
         text = re.sub(r"</?think\s*>", "\n", text, flags=re.IGNORECASE)
         text = text.replace("<final>", "").replace("</final>", "")
 
-        if "</think>" in raw_text:
-            leading = re.sub(r"</?think\s*>", "", raw_text.split("</think>", 1)[0], flags=re.IGNORECASE).strip()
+        if "```" in raw_text:
+            leading = re.sub(r"</?think\s*>", "", raw_text.split("```", 1)[0], flags=re.IGNORECASE).strip()
             if leading and "Thinking Process" not in leading:
                 return leading
 
@@ -187,12 +218,12 @@ class PolishThread(QThread):
                 continue
             if noise_re.search(stripped):
                 continue
-            if re.match(r'^[\"“].+[\"”]$', stripped) and not re.match(r"^\d+[\.、]\s*", stripped):
+            if re.match(r'^[\"""].+["""]$', stripped) and not re.match(r"^\d+[\.、]\s*", stripped):
                 continue
             if stripped.startswith(("*", "-", ">", "`")):
                 continue
             latin_count = len(re.findall(r"[A-Za-z]", stripped))
-            cjk_count = len(re.findall(r"[\u4e00-\u9fff]", stripped))
+            cjk_count = len(re.findall(r"[一-鿿]", stripped))
             if latin_count > max(6, cjk_count * 2):
                 continue
             cleaned_lines.append(stripped)
@@ -320,7 +351,7 @@ class PolishThread(QThread):
         raw_response = ""
         rule_text = self._rule_based_cleanup(self.raw_text)
         if self._should_use_fast_cleanup(self.raw_text, rule_text):
-            print("[DEBUG] 使用快速规整路径，跳过 LLM")
+            log.debug("使用快速规整路径，跳过 LLM")
             self.signals.polish_finished.emit(rule_text)
             return
 
@@ -337,15 +368,15 @@ class PolishThread(QThread):
                     continue
                 if first_token_time is None:
                     first_token_time = time.time()
-                    print(f"[TIMING] LLM 首字到达: {first_token_time - t0:.2f}s")
+                    log.info(f"LLM 首字到达: {first_token_time - t0:.2f}s")
                 raw_response += token
 
-            print(f"[TIMING] LLM 总耗时: {time.time() - t0:.2f}s")
+            log.info(f"LLM 总耗时: {time.time() - t0:.2f}s")
             final_text = self._extract_final_text(raw_response)
             if self._should_prefer_rule_result(final_text, rule_text):
-                print("[DEBUG] 模型输出偏离原文或仍是分析体，回退到贴近原文的规则清洗")
+                log.debug("模型输出偏离原文或仍是分析体，回退到贴近原文的规则清洗")
                 final_text = rule_text
-            print(f"[DEBUG] 最终整理结果长度: {len(final_text)}")
+            log.debug(f"最终整理结果长度: {len(final_text)}")
             self.signals.polish_finished.emit(final_text)
         except Exception as e:
             self.signals.error_occurred.emit(f"LLM 错误: {str(e)}")
@@ -358,12 +389,12 @@ class VCAIWindow(QWidget):
         super().__init__()
         self.load_config()
         self.init_ui()
-        
+
         self.llm_client = LLMClient()
         self.recorder = AudioRecorder()
         self.stt_client = STTClient()
         self.signals = WorkerSignals()
-        
+
         # 严格的信号连接
         self.ui_visibility_signal.connect(self.set_ui_visible)
         self.signals.raw_text_update.connect(self.on_raw_text_update)
@@ -380,10 +411,15 @@ class VCAIWindow(QWidget):
         self.target_bundle_id = None
         self.target_pid = None
 
+        ax_status = "loaded" if AXIsProcessTrusted else "None"
+        log.info(f"sys.platform={sys.platform}, AXIsProcessTrusted={ax_status}")
+
         if sys.platform != "darwin" or self._has_accessibility_permission():
+            log.info("Accessibility permission OK, starting hotkey listener")
             self._start_hotkey_listener()
         else:
-            self.signals.status_update.emit("首次启动请允许“辅助功能”权限，授权后热键即可生效")
+            log.warning("No accessibility permission, will bootstrap permissions")
+            self.signals.status_update.emit("首次启动请允许\"辅助功能\"权限，授权后热键即可生效")
             threading.Thread(target=self._bootstrap_macos_permissions, daemon=True).start()
 
         # 后台发送 warmup 请求，触发 MLX JIT 编译，消除首次推理的冷启动延迟
@@ -393,16 +429,16 @@ class VCAIWindow(QWidget):
         """用与实际推理相同的 system prompt 预热，确保 prompt cache 命中"""
         try:
             t0 = time.time()
-            print("[WARMUP] 正在预热 LLM...")
+            log.info("正在预热 LLM...")
             warmup_sys = (
                 "整理以下口语记录：保留原意，删除语气词和口头禅，"
                 "有多个要点时用序号列出。直接输出结果，不要任何解释。"
             )
             for _ in self.llm_client.stream_polish("你好", warmup_sys):
                 pass
-            print(f"[WARMUP] LLM 预热完成: {time.time() - t0:.2f}s")
+            log.info(f"LLM 预热完成: {time.time() - t0:.2f}s")
         except Exception as e:
-            print(f"[WARMUP] LLM 预热失败 (不影响使用): {e}")
+            log.warning(f"LLM 预热失败 (不影响使用): {e}")
 
     def _resource_candidates(self, filename):
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -470,10 +506,10 @@ class VCAIWindow(QWidget):
                 with open(candidate, "r", encoding="utf-8") as f:
                     self.config = self._merge_config(self.config, json.load(f))
                 loaded_path = candidate
-                print(f"[CONFIG] 已加载配置: {candidate}")
+                log.info(f"已加载配置: {candidate}")
                 break
             except Exception as e:
-                print(f"[CONFIG] 读取配置失败: {candidate}: {e}")
+                log.error(f"读取配置失败: {candidate}: {e}")
 
         config_dir = os.path.join(os.path.expanduser("~"), ".voicerttrans")
         os.makedirs(config_dir, exist_ok=True)
@@ -491,17 +527,17 @@ class VCAIWindow(QWidget):
             try:
                 with open(user_config_path, "w", encoding="utf-8") as f:
                     json.dump(self.config, f, ensure_ascii=False, indent=4)
-                print(f"[CONFIG] 已将旧默认热键迁移为新默认值: {user_config_path}")
+                log.info(f"已将旧默认热键迁移为新默认值: {user_config_path}")
             except Exception as e:
-                print(f"[CONFIG] 迁移用户配置失败: {e}")
+                log.error(f"迁移用户配置失败: {e}")
 
         if not os.path.exists(user_config_path):
             try:
                 with open(user_config_path, "w", encoding="utf-8") as f:
                     json.dump(self.config, f, ensure_ascii=False, indent=4)
-                print(f"[CONFIG] 已写入默认用户配置: {user_config_path}")
+                log.info(f"已写入默认用户配置: {user_config_path}")
             except Exception as e:
-                print(f"[CONFIG] 写入用户配置失败: {e}")
+                log.error(f"写入用户配置失败: {e}")
 
     def _has_accessibility_permission(self):
         if sys.platform != "darwin" or AXIsProcessTrusted is None:
@@ -509,8 +545,13 @@ class VCAIWindow(QWidget):
         try:
             return bool(AXIsProcessTrusted())
         except Exception as e:
-            print(f"[PERM] 检查辅助功能权限失败: {e}")
+            log.error(f"检查辅助功能权限失败: {e}")
             return False
+
+    def _request_accessibility_permission(self):
+        if sys.platform != "darwin":
+            return True
+        return self._has_accessibility_permission()
 
     def _open_macos_privacy_pane(self, pane):
         if sys.platform != "darwin":
@@ -527,7 +568,7 @@ class VCAIWindow(QWidget):
             subprocess.run(["open", url], check=False, capture_output=True, text=True)
             return True
         except Exception as e:
-            print(f"[PERM] 打开权限设置失败({pane}): {e}")
+            log.error(f"打开权限设置失败({pane}): {e}")
             return False
 
     def _request_microphone_permission(self):
@@ -552,7 +593,7 @@ class VCAIWindow(QWidget):
             done.wait(10)
             return granted_holder["value"]
         except Exception as e:
-            print(f"[PERM] 请求麦克风权限失败: {e}")
+            log.error(f"请求麦克风权限失败: {e}")
             return False
 
     def _prime_automation_permission(self):
@@ -562,34 +603,62 @@ class VCAIWindow(QWidget):
         return ok
 
     def _bootstrap_macos_permissions(self):
-        time.sleep(0.3)
-        mic_ok = self._request_microphone_permission()
-        access_ok = self._has_accessibility_permission()
-        time.sleep(0.3)
-        automation_ok = self._prime_automation_permission()
+        try:
+            log.info("Bootstrap: starting permission checks")
+            time.sleep(0.3)
+            log.info("Bootstrap: sleep done, checking accessibility")
+            access_ok = self._request_accessibility_permission()
+            log.info(f"Bootstrap: accessibility={access_ok}")
+            if not access_ok:
+                self.signals.status_update.emit("请在系统设置中授予辅助功能权限后重新打开应用")
+                return
 
-        if not mic_ok:
-            self._open_macos_privacy_pane("microphone")
-            self.signals.status_update.emit("请允许麦克风权限，否则无法录音")
-            return
+            # 辅助功能权限已授予，启动热键监听
+            self._start_hotkey_listener()
 
-        if not access_ok:
-            self._open_macos_privacy_pane("accessibility")
-            self.signals.status_update.emit("请在系统设置中允许“辅助功能”，授权后重新打开应用")
-            return
+            # 2. 麦克风权限（录音需要，可后续授权）
+            mic_ok = self._request_microphone_permission()
+            log.info(f"Bootstrap: microphone={mic_ok}")
+            if not mic_ok:
+                self._open_macos_privacy_pane("microphone")
+                self.signals.status_update.emit("热键已就绪，请允许麦克风权限以使用录音功能")
+                return
 
-        self._start_hotkey_listener()
+            # 3. 自动化权限（粘贴需要）
+            automation_ok = self._prime_automation_permission()
+            log.info(f"Bootstrap: automation={automation_ok}")
+            if not automation_ok:
+                self._open_macos_privacy_pane("automation")
+                self.signals.status_update.emit("请允许自动化权限以使用自动粘贴功能")
+                return
 
-        if not automation_ok:
-            self._open_macos_privacy_pane("automation")
-            self.signals.status_update.emit("请允许自动化/System Events 权限，否则无法自动粘贴")
-            return
-
-        self.signals.status_update.emit("准备就绪")
+            self.signals.status_update.emit("准备就绪")
+        except Exception as e:
+            log.error(f"Bootstrap crashed: {e}", exc_info=True)
 
     def _start_hotkey_listener(self):
+        log.info("_start_hotkey_listener called")
         if self.hotkey is not None:
             return
+
+        # Diagnostic: check accessibility and try CGEventTapCreate directly
+        if sys.platform == "darwin":
+            try:
+                ax_ok = AXIsProcessTrusted() if AXIsProcessTrusted else None
+                log.info(f"Diagnostic: AXIsProcessTrusted={ax_ok}")
+
+                from Quartz import CGEventTapCreate, kCGEventKeyDown, kCGEventTapOptionListenOnly, kCGHIDEventTap
+                test_tap = CGEventTapCreate(
+                    kCGHIDEventTap, 0, kCGEventTapOptionListenOnly,
+                    1 << kCGEventKeyDown, lambda *args: None, None
+                )
+                log.info(f"Diagnostic: CGEventTapCreate test tap={'OK' if test_tap else 'NULL'}")
+                if test_tap:
+                    from Quartz import CFMachPortInvalidate
+                    CFMachPortInvalidate(test_tap)
+            except Exception as diag_err:
+                log.warning(f"Diagnostic: CGEventTapCreate direct test failed: {diag_err}")
+
         try:
             self.hotkey = HotkeyListener(
                 self.config.get("hotkey", DEFAULT_CONFIG["hotkey"]),
@@ -597,39 +666,97 @@ class VCAIWindow(QWidget):
                 self.on_hotkey_release_worker,
             )
             self.hotkey.start()
+
+            # Check if listener thread is actually alive after a brief wait
+            time.sleep(1.0)
+            if hasattr(self.hotkey, "is_alive") and not self.hotkey.is_alive():
+                log.error("HotkeyListener thread is NOT alive after start")
+                self.signals.status_update.emit("热键监听线程启动后意外退出，请检查权限和配置")
+            else:
+                log.info("HotkeyListener started successfully")
         except Exception as e:
             self.hotkey = None
-            print(f"[HOTKEY] 启动热键监听失败: {e}")
+            log.error(f"启动热键监听失败: {e}")
             self.signals.status_update.emit("热键监听启动失败，请检查权限和配置")
+
+    def _create_tray_pixmap(self, text, bg_color):
+        pixmap = QPixmap(22, 22)
+        pixmap.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor(bg_color))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(0, 0, 22, 22, 4, 4)
+        painter.setPen(QColor(255, 255, 255))
+        font = QFont("Helvetica", 9, QFont.Weight.Bold)
+        painter.setFont(font)
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)
+        painter.end()
+        return pixmap
+
+    def _init_tray_icon(self):
+        icon = QIcon(self._create_tray_pixmap("V", "#2196F3"))
+        self.tray_icon = QSystemTrayIcon(icon, self)
+
+        tray_menu = QMenu()
+
+        self.tray_status_action = tray_menu.addAction("Status: ready")
+        self.tray_status_action.setEnabled(False)
+
+        hk_str = self.config.get("hotkey", DEFAULT_CONFIG["hotkey"]).upper()
+        tray_menu.addAction(f"Hotkey: {hk_str}").setEnabled(False)
+
+        tray_menu.addSeparator()
+        tray_menu.addAction("Quit", QApplication.quit)
+
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.setToolTip("VoiceRTTrans - ready")
+        self.tray_icon.show()
+
+    def _update_tray_tooltip(self, status_text):
+        if not hasattr(self, "tray_icon"):
+            return
+
+        color_map = {
+            "ready": "#2196F3",
+            "recording": "#F44336",
+            "polishing": "#FF9800",
+        }
+        bg = color_map.get(status_text, "#2196F3")
+        self.tray_icon.setIcon(QIcon(self._create_tray_pixmap("V", bg)))
+        self.tray_icon.setToolTip(f"VoiceRTTrans - {status_text}")
+        if hasattr(self, "tray_status_action"):
+            self.tray_status_action.setText(f"Status: {status_text}")
 
     def init_ui(self):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool | Qt.WindowType.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowOpacity(self.config.get("ui", {}).get("opacity", 0.85))
-        
+
         layout = QVBoxLayout()
-        
+
         self.status_label = QLabel("准备就绪 (按住可拖动窗口)")
         self.status_label.setStyleSheet("color: white; background-color: rgba(50, 50, 50, 180); border-radius: 5px; padding: 5px;")
         layout.addWidget(self.status_label)
-        
+
         self.raw_text_edit = QTextEdit()
         self.raw_text_edit.setPlaceholderText("录音文本显示区...")
         self.raw_text_edit.setReadOnly(True)
         self.raw_text_edit.setStyleSheet("background-color: rgba(30, 30, 30, 200); color: #AAAAAA; border: none; border-radius: 10px; padding: 10px;")
         self.raw_text_edit.setFixedHeight(120)
         layout.addWidget(self.raw_text_edit)
-        
+
         self.setLayout(layout)
         self.resize(320, 165)
-        
+
         # 默认显示在右下角
         screen_geometry = self.screen().availableGeometry()
         x = screen_geometry.width() - self.width() - 20
         y = screen_geometry.height() - self.height() - 20
         self.move(x, y)
-        
+
         self.hide()
+        self._init_tray_icon()
 
     @pyqtSlot(bool)
     def set_ui_visible(self, visible):
@@ -646,12 +773,13 @@ class VCAIWindow(QWidget):
         self.signals.reset_display.emit()
         hk_str = self.config.get("hotkey", DEFAULT_CONFIG["hotkey"]).upper()
         self.signals.status_update.emit(f"正在录音 (松开 {hk_str} 停止)...")
+        self._update_tray_tooltip("recording")
         # 清空文本需通过信号或在 UI 线程处理。这里简单点，直接在 press 时清空（因为 press 时 UI 线程会响应信号显示）
         # 但为了极度安全，我们把清空也发出去，或者在 safe_show 里做。
-        
+
         if self.trans_thread and self.trans_thread.isRunning():
             return
-            
+
         self.trans_thread = TranscriptionThread(self.recorder, self.stt_client, self.signals)
         self.trans_thread.start()
 
@@ -668,6 +796,7 @@ class VCAIWindow(QWidget):
     def on_raw_text_ready(self, text):
         self.raw_text_edit.setText(text)
         self.raw_text_edit.moveCursor(self.raw_text_edit.textCursor().MoveOperation.End)
+        self._update_tray_tooltip("polishing")
         if text and not text.startswith("["):
             self.signals.status_update.emit("识别完成，正在润色...")
             self.polish_thread = PolishThread(self.llm_client, text, self.signals)
@@ -681,7 +810,7 @@ class VCAIWindow(QWidget):
     def on_polish_finished(self, final_text):
         self.signals.status_update.emit("已完成并复制到剪贴板，正在粘贴...")
         pyperclip.copy(final_text)
-        print(f"[PASTE] 已复制到剪贴板，目标应用: {self.target_app_name or 'unknown'} ({self.target_bundle_id or 'no-bundle'})")
+        log.info(f"已复制到剪贴板，目标应用: {self.target_app_name or 'unknown'} ({self.target_bundle_id or 'no-bundle'})")
 
         def auto_paste():
             self.hide()
@@ -692,6 +821,7 @@ class VCAIWindow(QWidget):
 
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(120, auto_paste)
+        self._update_tray_tooltip("ready")
 
     def _run_osascript(self, script):
         try:
@@ -699,7 +829,7 @@ class VCAIWindow(QWidget):
             env = os.environ.copy()
             if 'PATH' not in env:
                 env['PATH'] = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'
-            
+
             result = subprocess.run(
                 ["osascript", "-e", script],
                 check=False,
@@ -710,10 +840,10 @@ class VCAIWindow(QWidget):
             stdout = result.stdout.strip()
             stderr = result.stderr.strip()
             if result.returncode != 0:
-                print(f"[PASTE] osascript 失败 (code={result.returncode}): {stderr or stdout}")
+                log.error(f"osascript 失败 (code={result.returncode}): {stderr or stdout}")
             return result.returncode == 0, stdout
         except Exception as e:
-            print(f"[PASTE] 调用 osascript 失败: {e}")
+            log.error(f"调用 osascript 失败: {e}")
             return False, ""
 
     def _capture_target_app(self):
@@ -726,13 +856,13 @@ class VCAIWindow(QWidget):
                     self.target_app_name = front_app.localizedName() or None
                     self.target_bundle_id = front_app.bundleIdentifier() or None
                     self.target_pid = int(front_app.processIdentifier())
-                    print(
-                        f"[PASTE] 记录目标应用: {self.target_app_name} "
+                    log.info(
+                        f"记录目标应用: {self.target_app_name} "
                         f"({self.target_bundle_id or 'no-bundle'}, pid={self.target_pid})"
                     )
                     return
             except Exception as e:
-                print(f"[PASTE] AppKit 获取目标应用失败: {e}")
+                log.error(f"AppKit 获取目标应用失败: {e}")
         ok, output = self._run_osascript(
             'tell application "System Events"\n'
             'set frontApp to first application process whose frontmost is true\n'
@@ -750,7 +880,7 @@ class VCAIWindow(QWidget):
             self.target_app_name = app_name or None
             self.target_bundle_id = bundle_id or None
             self.target_pid = None
-            print(f"[PASTE] 记录目标应用: {self.target_app_name} ({self.target_bundle_id or 'no-bundle'})")
+            log.info(f"记录目标应用: {self.target_app_name} ({self.target_bundle_id or 'no-bundle'})")
 
     def _restore_target_app(self):
         if sys.platform != "darwin":
@@ -759,32 +889,32 @@ class VCAIWindow(QWidget):
             try:
                 app = NSRunningApplication.runningApplicationWithProcessIdentifier_(self.target_pid)
                 if app is not None and app.activateWithOptions_(1):
-                    print(f"[PASTE] 已恢复目标应用 PID: {self.target_pid}")
+                    log.info(f"已恢复目标应用 PID: {self.target_pid}")
                     return True
             except Exception as e:
-                print(f"[PASTE] AppKit 恢复目标应用失败: {e}")
+                log.error(f"AppKit 恢复目标应用失败: {e}")
         if self.target_bundle_id:
             ok, _ = self._run_osascript(f'tell application id "{self.target_bundle_id}" to activate')
             if ok:
-                print(f"[PASTE] 已恢复目标应用: {self.target_bundle_id}")
+                log.info(f"已恢复目标应用: {self.target_bundle_id}")
                 return True
         if self.target_app_name:
             ok, _ = self._run_osascript(f'tell application "{self.target_app_name}" to activate')
             if ok:
-                print(f"[PASTE] 已恢复目标应用: {self.target_app_name}")
+                log.info(f"已恢复目标应用: {self.target_app_name}")
                 return True
-        print("[PASTE] 未能恢复目标应用，将直接尝试发送粘贴快捷键")
+        log.warning("未能恢复目标应用，将直接尝试发送粘贴快捷键")
         return False
 
     def _send_paste_shortcut(self):
         if sys.platform != "darwin":
-            print("[PASTE] 当前仅实现 macOS 自动粘贴")
+            log.info("当前仅实现 macOS 自动粘贴")
             return
         ok, _ = self._run_osascript(
             'tell application "System Events" to keystroke "v" using command down'
         )
         if ok:
-            print("[PASTE] 已发送 Cmd+V")
+            log.info("已发送 Cmd+V")
 
     @pyqtSlot(str)
     def on_error(self, err_msg):

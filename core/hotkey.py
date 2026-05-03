@@ -1,5 +1,10 @@
 from pynput import keyboard
 
+try:
+    from pynput._util.darwin_vks import SYMBOLS as DARWIN_SYMBOLS
+except ImportError:
+    DARWIN_SYMBOLS = {}
+
 class HotkeyListener:
     def __init__(self, key_str, on_press_callback, on_release_callback):
         self.key_str = key_str.lower()
@@ -9,6 +14,7 @@ class HotkeyListener:
         
         self.target_modifiers = set()
         self.target_char = None
+        self.target_vks = set()
         
         for part in self.key_str.split('+'):
             part = part.strip()
@@ -21,6 +27,12 @@ class HotkeyListener:
                 elif part == 'shift': self.target_modifiers.add(keyboard.Key.shift)
             else:
                 self.target_char = part
+
+        if self.target_char is not None:
+            self.target_vks = {
+                vk for vk, symbol in DARWIN_SYMBOLS.items()
+                if symbol == self.target_char
+            }
             
         self.current_modifiers = set()
         self.char_pressed = False
@@ -32,6 +44,20 @@ class HotkeyListener:
             'v': ['v', '√'],
             ' ': [' ', '\xa0']
         }
+
+    def _matches_target_key(self, key):
+        if self.target_char is None:
+            return False
+
+        if hasattr(key, 'vk') and key.vk in self.target_vks:
+            return True
+
+        if hasattr(key, 'char') and key.char is not None:
+            char = key.char.lower()
+            allowed_chars = self.mac_option_map.get(self.target_char, [self.target_char])
+            return char in allowed_chars
+
+        return False
 
     def _is_modifier(self, key):
         return key in [keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r,
@@ -52,11 +78,8 @@ class HotkeyListener:
         if self._is_modifier(key):
             norm_mod = self._normalize_modifier(key)
             self.current_modifiers.add(norm_mod)
-        elif hasattr(key, 'char') and key.char is not None:
-            char = key.char.lower()
-            allowed_chars = self.mac_option_map.get(self.target_char, [self.target_char])
-            if char in allowed_chars:
-                self.char_pressed = True
+        elif self._matches_target_key(key):
+            self.char_pressed = True
         
         self._check_state()
 
@@ -65,11 +88,8 @@ class HotkeyListener:
             norm_mod = self._normalize_modifier(key)
             if norm_mod in self.current_modifiers:
                 self.current_modifiers.remove(norm_mod)
-        elif hasattr(key, 'char') and key.char is not None:
-            char = key.char.lower()
-            allowed_chars = self.mac_option_map.get(self.target_char, [self.target_char])
-            if char in allowed_chars:
-                self.char_pressed = False
+        elif self._matches_target_key(key):
+            self.char_pressed = False
                 
         self._check_state()
 

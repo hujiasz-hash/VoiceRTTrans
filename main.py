@@ -44,10 +44,9 @@ if sys.platform == "darwin":
         NSWorkspace = None
 
     try:
-        from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
+        from ApplicationServices import AXIsProcessTrusted
     except ImportError:
-        AXIsProcessTrustedWithOptions = None
-        kAXTrustedCheckOptionPrompt = None
+        AXIsProcessTrusted = None
 
     try:
         from AVFoundation import (
@@ -486,21 +485,30 @@ class VCAIWindow(QWidget):
                 print(f"[CONFIG] 写入用户配置失败: {e}")
 
     def _has_accessibility_permission(self):
-        if sys.platform != "darwin" or AXIsProcessTrustedWithOptions is None:
+        if sys.platform != "darwin" or AXIsProcessTrusted is None:
             return True
         try:
-            return bool(AXIsProcessTrustedWithOptions({}))
+            return bool(AXIsProcessTrusted())
         except Exception as e:
             print(f"[PERM] 检查辅助功能权限失败: {e}")
             return False
 
-    def _request_accessibility_permission(self):
-        if sys.platform != "darwin" or AXIsProcessTrustedWithOptions is None or kAXTrustedCheckOptionPrompt is None:
-            return True
+    def _open_macos_privacy_pane(self, pane):
+        if sys.platform != "darwin":
+            return False
+        urls = {
+            "microphone": "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+            "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            "automation": "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+        }
+        url = urls.get(pane)
+        if not url:
+            return False
         try:
-            return bool(AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True}))
+            subprocess.run(["open", url], check=False, capture_output=True, text=True)
+            return True
         except Exception as e:
-            print(f"[PERM] 请求辅助功能权限失败: {e}")
+            print(f"[PERM] 打开权限设置失败({pane}): {e}")
             return False
 
     def _request_microphone_permission(self):
@@ -537,21 +545,24 @@ class VCAIWindow(QWidget):
     def _bootstrap_macos_permissions(self):
         time.sleep(0.3)
         mic_ok = self._request_microphone_permission()
-        access_ok = self._request_accessibility_permission()
+        access_ok = self._has_accessibility_permission()
         time.sleep(0.3)
         automation_ok = self._prime_automation_permission()
 
-        if access_ok:
-            self._start_hotkey_listener()
-        else:
-            self.signals.status_update.emit("请在系统设置中允许“辅助功能”，然后重新打开应用")
-            return
-
         if not mic_ok:
+            self._open_macos_privacy_pane("microphone")
             self.signals.status_update.emit("请允许麦克风权限，否则无法录音")
             return
 
+        if not access_ok:
+            self._open_macos_privacy_pane("accessibility")
+            self.signals.status_update.emit("请在系统设置中允许“辅助功能”，授权后重新打开应用")
+            return
+
+        self._start_hotkey_listener()
+
         if not automation_ok:
+            self._open_macos_privacy_pane("automation")
             self.signals.status_update.emit("请允许自动化/System Events 权限，否则无法自动粘贴")
             return
 

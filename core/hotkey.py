@@ -12,9 +12,10 @@ class HotkeyListener:
         
         for part in self.key_str.split('+'):
             part = part.strip()
-            if part in ['ctrl', 'cmd', 'command', 'alt', 'option', 'alt_r', 'right_option', 'shift']:
+            if part in ['ctrl', 'cmd', 'command', 'cmd_r', 'right_command', 'alt', 'option', 'alt_r', 'right_option', 'shift']:
                 if part == 'ctrl': self.target_modifiers.add(keyboard.Key.ctrl)
                 elif part in ['cmd', 'command']: self.target_modifiers.add(keyboard.Key.cmd)
+                elif part in ['cmd_r', 'right_command']: self.target_modifiers.add(keyboard.Key.cmd_r)
                 elif part in ['alt', 'option']: self.target_modifiers.add(keyboard.Key.alt)
                 elif part in ['alt_r', 'right_option']: self.target_modifiers.add(keyboard.Key.alt_r)
                 elif part == 'shift': self.target_modifiers.add(keyboard.Key.shift)

@@ -29,7 +29,7 @@ from core.llm_client import LLMClient
 from core.stt_client import STTClient
 
 DEFAULT_CONFIG = {
-    "hotkey": "cmd+r",
+    "hotkey": "cmd_r+'",
     "ui": {
         "opacity": 0.85,
         "always_on_top": True,
@@ -421,26 +421,30 @@ class VCAIWindow(QWidget):
             return DEFAULT_CONFIG["hotkey"]
 
         hotkey = hotkey_value.strip().lower().replace(" ", "")
+        hotkey = hotkey.replace("’", "'").replace("‘", "'")
         hotkey = hotkey.replace("right_option", "alt_r")
+        hotkey = hotkey.replace("right_command", "cmd_r")
         hotkey = hotkey.replace("command", "cmd").replace("option", "alt")
+        hotkey = hotkey.replace("cmd_r+", "__CMD_R__+")
         hotkey = hotkey.replace("alt_r+", "__ALT_R__+")
         hotkey = hotkey.replace("cmd_", "cmd+").replace("ctrl_", "ctrl+")
         hotkey = hotkey.replace("alt_", "alt+").replace("shift_", "shift+")
+        hotkey = hotkey.replace("__CMD_R__+", "cmd_r+")
         hotkey = hotkey.replace("__ALT_R__+", "alt_r+")
 
-        if "'" in hotkey or hotkey.endswith("+"):
+        if hotkey.endswith("+"):
             return DEFAULT_CONFIG["hotkey"]
 
         parts = [part for part in hotkey.split("+") if part]
         if len(parts) < 2:
             return DEFAULT_CONFIG["hotkey"]
 
-        valid_modifiers = {"cmd", "ctrl", "alt", "alt_r", "right_option", "shift"}
+        valid_modifiers = {"cmd", "cmd_r", "ctrl", "alt", "alt_r", "right_option", "right_command", "shift"}
         modifiers = parts[:-1]
         target_key = parts[-1]
         if any(modifier not in valid_modifiers for modifier in modifiers):
             return DEFAULT_CONFIG["hotkey"]
-        if len(target_key) != 1 or not re.match(r"[a-z0-9/]", target_key):
+        if len(target_key) != 1 or not re.match(r"[a-z0-9/']", target_key):
             return DEFAULT_CONFIG["hotkey"]
         return "+".join(modifiers + [target_key])
 

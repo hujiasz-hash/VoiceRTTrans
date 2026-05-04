@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon, QMenu,
 )
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, pyqtSlot
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, pyqtSlot, QPoint
 
 from core.hotkey import HotkeyListener
 from core.audio_stream import AudioRecorder
@@ -410,6 +410,7 @@ class VCAIWindow(QWidget):
         self.target_app_name = None
         self.target_bundle_id = None
         self.target_pid = None
+        self.tray_auto_recording = False
 
         ax_status = "loaded" if AXIsProcessTrusted else "None"
         log.info(f"sys.platform={sys.platform}, AXIsProcessTrusted={ax_status}")
@@ -694,11 +695,28 @@ class VCAIWindow(QWidget):
         painter.end()
         return pixmap
 
+    def _load_tray_icons(self):
+        self._tray_icons = {}
+        for name, path in [
+            ("ready", "icon_tray.png"),
+            ("recording", "icon_tray_recording.png"),
+            ("polishing", "icon_tray_polishing.png"),
+        ]:
+            for candidate in self._resource_candidates(path):
+                if os.path.exists(candidate):
+                    self._tray_icons[name] = QIcon(candidate)
+                    break
+            else:
+                self._tray_icons[name] = QIcon(self._create_tray_pixmap("V", "#2196F3" if name == "ready" else ("#F44336" if name == "recording" else "#FF9800")))
+
     def _init_tray_icon(self):
-        icon = QIcon(self._create_tray_pixmap("V", "#2196F3"))
-        self.tray_icon = QSystemTrayIcon(icon, self)
+        self._load_tray_icons()
+        self.tray_icon = QSystemTrayIcon(self._tray_icons["ready"], self)
 
         tray_menu = QMenu()
+
+        self.tray_toggle_action = QMenu.addAction(tray_menu, "开始录音")
+        self.tray_toggle_action.triggered.connect(self._on_tray_toggle)
 
         self.tray_status_action = tray_menu.addAction("Status: ready")
         self.tray_status_action.setEnabled(False)
@@ -709,21 +727,50 @@ class VCAIWindow(QWidget):
         tray_menu.addSeparator()
         tray_menu.addAction("Quit", QApplication.quit)
 
+        self._tray_menu = tray_menu
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.setToolTip("VoiceRTTrans - ready")
+        self.tray_icon.activated.connect(self._on_tray_icon_activated)
         self.tray_icon.show()
 
-    def _update_tray_tooltip(self, status_text):
-        if not hasattr(self, "tray_icon"):
+    def _on_tray_icon_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self._on_tray_toggle()
+
+    def _on_tray_toggle(self):
+        if self.tray_auto_recording:
+            self._stop_tray_auto_recording()
+        else:
+            self._start_tray_auto_recording()
+
+    def _start_tray_auto_recording(self):
+        self.tray_auto_recording = True
+        self._capture_target_app()
+        self.ui_visibility_signal.emit(True)
+        self.signals.reset_display.emit()
+        self.signals.status_update.emit("正在录音 (点击图标停止)...")
+        self._update_tray_tooltip("recording")
+        if hasattr(self, "tray_toggle_action"):
+            self.tray_toggle_action.setText("停止录音")
+
+        if self.trans_thread and self.trans_thread.isRunning():
             return
 
-        color_map = {
-            "ready": "#2196F3",
-            "recording": "#F44336",
-            "polishing": "#FF9800",
-        }
-        bg = color_map.get(status_text, "#2196F3")
-        self.tray_icon.setIcon(QIcon(self._create_tray_pixmap("V", bg)))
+        self.trans_thread = TranscriptionThread(self.recorder, self.stt_client, self.signals)
+        self.trans_thread.start()
+
+    def _stop_tray_auto_recording(self):
+        self.tray_auto_recording = False
+        if self.trans_thread:
+            self.trans_thread.stop()
+        if hasattr(self, "tray_toggle_action"):
+            self.tray_toggle_action.setText("开始录音")
+
+    def _update_tray_tooltip(self, status_text):
+        if not hasattr(self, "tray_icon") or not hasattr(self, "_tray_icons"):
+            return
+        icon = self._tray_icons.get(status_text, self._tray_icons.get("ready"))
+        self.tray_icon.setIcon(icon)
         self.tray_icon.setToolTip(f"VoiceRTTrans - {status_text}")
         if hasattr(self, "tray_status_action"):
             self.tray_status_action.setText(f"Status: {status_text}")

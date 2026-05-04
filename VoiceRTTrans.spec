@@ -11,6 +11,10 @@ a = Analysis(
     datas=[
         ('config.example.json', '.'),
         ('.env.example', '.'),
+        ('VoiceRTTrans.icns', '.'),
+        ('icon_tray.png', '.'),
+        ('icon_tray_recording.png', '.'),
+        ('icon_tray_polishing.png', '.'),
     ],
     hiddenimports=[
         'pynput',
@@ -55,7 +59,7 @@ if sys.platform == 'darwin':
         target_arch=None,
         codesign_identity=None,
         entitlements_file='entitlements.plist',
-        icon=None,
+        icon='VoiceRTTrans.icns',
     )
 
     coll = COLLECT(
@@ -72,7 +76,7 @@ if sys.platform == 'darwin':
     app = BUNDLE(
         coll,
         name='VoiceRTTrans.app',
-        icon=None,
+        icon='VoiceRTTrans.icns',
         bundle_identifier='com.voicerttrans.app',
         entitlements_file='entitlements.plist',
         info_plist={

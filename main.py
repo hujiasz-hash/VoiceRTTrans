@@ -696,7 +696,12 @@ class VCAIWindow(QWidget):
         return pixmap
 
     def _init_tray_icon(self):
-        icon = QIcon(self._create_tray_pixmap("V", "#2196F3"))
+        for icon_path in self._resource_candidates("icon_tray.png"):
+            if os.path.exists(icon_path):
+                icon = QIcon(icon_path)
+                break
+        else:
+            icon = QIcon(self._create_tray_pixmap("V", "#2196F3"))
         self.tray_icon = QSystemTrayIcon(icon, self)
 
         tray_menu = QMenu()
@@ -755,14 +760,6 @@ class VCAIWindow(QWidget):
     def _update_tray_tooltip(self, status_text):
         if not hasattr(self, "tray_icon"):
             return
-
-        color_map = {
-            "ready": "#2196F3",
-            "recording": "#F44336",
-            "polishing": "#FF9800",
-        }
-        bg = color_map.get(status_text, "#2196F3")
-        self.tray_icon.setIcon(QIcon(self._create_tray_pixmap("V", bg)))
         self.tray_icon.setToolTip(f"VoiceRTTrans - {status_text}")
         if hasattr(self, "tray_status_action"):
             self.tray_status_action.setText(f"Status: {status_text}")

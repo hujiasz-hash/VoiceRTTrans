@@ -13,6 +13,8 @@ a = Analysis(
         ('.env.example', '.'),
         ('VoiceRTTrans.icns', '.'),
         ('icon_tray.png', '.'),
+        ('icon_tray_recording.png', '.'),
+        ('icon_tray_polishing.png', '.'),
     ],
     hiddenimports=[
         'pynput',

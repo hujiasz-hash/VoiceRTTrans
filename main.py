@@ -695,14 +695,23 @@ class VCAIWindow(QWidget):
         painter.end()
         return pixmap
 
+    def _load_tray_icons(self):
+        self._tray_icons = {}
+        for name, path in [
+            ("ready", "icon_tray.png"),
+            ("recording", "icon_tray_recording.png"),
+            ("polishing", "icon_tray_polishing.png"),
+        ]:
+            for candidate in self._resource_candidates(path):
+                if os.path.exists(candidate):
+                    self._tray_icons[name] = QIcon(candidate)
+                    break
+            else:
+                self._tray_icons[name] = QIcon(self._create_tray_pixmap("V", "#2196F3" if name == "ready" else ("#F44336" if name == "recording" else "#FF9800")))
+
     def _init_tray_icon(self):
-        for icon_path in self._resource_candidates("icon_tray.png"):
-            if os.path.exists(icon_path):
-                icon = QIcon(icon_path)
-                break
-        else:
-            icon = QIcon(self._create_tray_pixmap("V", "#2196F3"))
-        self.tray_icon = QSystemTrayIcon(icon, self)
+        self._load_tray_icons()
+        self.tray_icon = QSystemTrayIcon(self._tray_icons["ready"], self)
 
         tray_menu = QMenu()
 
@@ -758,8 +767,10 @@ class VCAIWindow(QWidget):
             self.tray_toggle_action.setText("开始录音")
 
     def _update_tray_tooltip(self, status_text):
-        if not hasattr(self, "tray_icon"):
+        if not hasattr(self, "tray_icon") or not hasattr(self, "_tray_icons"):
             return
+        icon = self._tray_icons.get(status_text, self._tray_icons.get("ready"))
+        self.tray_icon.setIcon(icon)
         self.tray_icon.setToolTip(f"VoiceRTTrans - {status_text}")
         if hasattr(self, "tray_status_action"):
             self.tray_status_action.setText(f"Status: {status_text}")

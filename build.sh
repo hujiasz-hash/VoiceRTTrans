@@ -1,0 +1,85 @@
+#!/bin/bash
+
+# 确保脚本发生任何错误时立即停止
+set -e
+
+WORKSPACE="/Users/hujia/Desktop/cla/2026-06_voiceflow"
+APP_NAME="VoiceFlow"
+BUILD_DIR="$WORKSPACE/build"
+APP_DIR="$BUILD_DIR/$APP_NAME.app"
+
+echo "🚀 开始编译打包 $APP_NAME.app..."
+
+# 1. 建立纯净的编译输出目录
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR"
+mkdir -p "$APP_DIR/Contents/MacOS"
+mkdir -p "$APP_DIR/Contents/Frameworks"
+mkdir -p "$APP_DIR/Contents/Resources"
+
+# 2. 编译 Swift 源码
+echo "💻 正在编译 Swift 源代码..."
+swiftc -parse-as-library \
+  -import-objc-header "$WORKSPACE/VoiceFlow-Bridging-Header.h" \
+  -I "$WORKSPACE/libs" \
+  -L "$WORKSPACE/libs" \
+  -lsherpa-onnx-c-api \
+  -Xlinker -rpath -Xlinker "@executable_path/../Frameworks" \
+  "$WORKSPACE/VoiceFlow/VoiceFlowApp.swift" \
+  "$WORKSPACE/VoiceFlow/AppDelegate.swift" \
+  "$WORKSPACE/VoiceFlow/Services/GlobalInputMonitor.swift" \
+  "$WORKSPACE/VoiceFlow/Services/TextInjector.swift" \
+  "$WORKSPACE/VoiceFlow/Models/AudioStreamManager.swift" \
+  "$WORKSPACE/VoiceFlow/Models/SpeechRecognizer.swift" \
+  "$WORKSPACE/VoiceFlow/Views/FloatingPanel.swift" \
+  "$WORKSPACE/VoiceFlow/Views/SpeechOverlayView.swift" \
+  "$WORKSPACE/VoiceFlow/Views/SettingsView.swift" \
+  -o "$APP_DIR/Contents/MacOS/$APP_NAME"
+echo "✅ Swift 编译完成: $APP_NAME 二进制"
+
+# 3. 拷贝 Dynamic Libraries 依赖库到 App 包内
+echo "📦 正在拷贝并修正动态链接库..."
+cp "$WORKSPACE/libs/"*.dylib "$APP_DIR/Contents/Frameworks/"
+
+# 修正包内 dylib 相互依存关系和装载路径
+# libsherpa-onnx-c-api 依赖 libonnxruntime.dylib，将其装载点修正为 @loader_path 相对路径
+install_name_tool -change "libonnxruntime.dylib" "@loader_path/libonnxruntime.dylib" "$APP_DIR/Contents/Frameworks/libsherpa-onnx-c-api.dylib"
+install_name_tool -change "libonnxruntime.1.24.4.dylib" "@loader_path/libonnxruntime.dylib" "$APP_DIR/Contents/Frameworks/libsherpa-onnx-c-api.dylib"
+
+# 4. 写入 Info.plist 配置文件
+echo "📝 写入 Info.plist 配置文件..."
+cat <<EOF > "$APP_DIR/Contents/Info.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+    <key>CFBundleExecutable</key>
+    <string>$APP_NAME</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.hujia.$APP_NAME</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$APP_NAME</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>VoiceFlow 需要麦克风权限以捕获音频进行本地语音输入转写。</string>
+    <key>LSUIElement</key>
+    <string>1</string>
+</dict>
+</plist>
+EOF
+
+echo "🎉 $APP_NAME.app 打包成功！"
+echo "👉 安装包位于: $APP_DIR"

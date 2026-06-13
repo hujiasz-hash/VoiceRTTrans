@@ -27,6 +27,20 @@ venv/
 env/
 .env/
 
+# Node.js dependencies
+node_modules/
+package-lock.json
+
+# Archive files
+*.zip
+*.tar
+*.tar.gz
+*.tar.bz2
+
+# Local test binaries
+VoiceFlowApp
+
+
 # macOS System Files
 .DS_Store
 

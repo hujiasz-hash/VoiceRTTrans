@@ -1,0 +1,13 @@
+<svg width="22" height="22" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
+
+ <!-- 声波条 (均匀分布, 对称) -->
+ <rect x="4"   y="5"   width="1.8" height="3" rx="0.9" fill="#000000" />
+ <rect x="7"   y="3.5" width="1.8" height="5" rx="0.9" fill="#000000" />
+ <rect x="10"  y="1.5" width="1.8" height="7" rx="0.9" fill="#000000" />
+ <rect x="13"  y="3.5" width="1.8" height="5" rx="0.9" fill="#000000" />
+ <rect x="16"  y="5"   width="1.8" height="3" rx="0.9" fill="#000000" />
+
+ <!-- V 形 (加粗填充) -->
+ <path d="M 3 10.5 L 11 20.5 L 19 10.5 L 16 10.5 L 11 17 L 6 10.5 Z" fill="#000000" />
+
+</svg>

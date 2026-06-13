@@ -21,17 +21,21 @@ try:
 except Exception:
     pass
 
+import platform
+
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QTextEdit, QLabel,
-    QSystemTrayIcon, QMenu,
+    QSystemTrayIcon, QMenu, QDialog, QPushButton, QVBoxLayout as QVBoxLayout2,
+    QMessageBox, QProgressDialog,
 )
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, pyqtSlot, QPoint
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QObject, pyqtSlot, QPoint
 
 from core.hotkey import HotkeyListener
 from core.audio_stream import AudioRecorder
 from core.llm_client import LLMClient
 from core.stt_client import STTClient
+from core.scenario_manager import ScenarioManager
 
 
 def _setup_logging():
@@ -65,6 +69,10 @@ DEFAULT_CONFIG = {
         "opacity": 0.85,
         "always_on_top": True,
     },
+    "stt": {
+        "prefer_local": None,
+        "installed": False,
+    },
 }
 
 if sys.platform == "darwin":
@@ -91,6 +99,117 @@ if sys.platform == "darwin":
         AVMediaTypeAudio = None
         AVAuthorizationStatusAuthorized = None
         AVAuthorizationStatusNotDetermined = None
+
+class EditPromptDialog(QDialog):
+    """编辑场景指令的对话框。"""
+    def __init__(self, scene, scenario_manager, parent=None):
+        super().__init__(parent)
+        self.scene = scene
+        self.sm = scenario_manager
+        self.setWindowTitle("编辑场景指令")
+        self.setMinimumSize(500, 350)
+
+        layout = QVBoxLayout2()
+
+        self.name_label = QLabel(f"场景：{scene['name']} ({scene['id']})")
+        layout.addWidget(self.name_label)
+
+        self.text_edit = QTextEdit()
+        self.text_edit.setPlainText(scene.get("prompt", ""))
+        layout.addWidget(self.text_edit)
+
+        btn_layout = QVBoxLayout2()
+        self.reset_btn = QPushButton("恢复默认")
+        self.reset_btn.clicked.connect(self._on_reset)
+        btn_layout.addWidget(self.reset_btn)
+
+        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(self.cancel_btn)
+
+        self.save_btn = QPushButton("保存")
+        self.save_btn.clicked.connect(self._on_save)
+        btn_layout.addWidget(self.save_btn)
+
+        layout.addLayout(btn_layout)
+        self.setLayout(layout)
+
+    def _on_reset(self):
+        self.sm.reset_prompt(self.scene["id"])
+        self.text_edit.setPlainText(self.sm.current.get("prompt", ""))
+
+    def _on_save(self):
+        self.sm.update_prompt(self.scene["id"], self.text_edit.toPlainText())
+        self.accept()
+
+
+class ASRInstallerThread(QThread):
+    progress_signal = pyqtSignal(str, int)  # 信号 (消息描述, 进度百分比)
+    finished_signal = pyqtSignal(bool, str) # 信号 (是否成功, 成功/错误信息)
+
+    def run(self):
+        import subprocess
+        import os
+        
+        user_dir = os.path.join(os.path.expanduser("~"), ".voicerttrans")
+        env_dir = os.path.join(user_dir, "asr-env")
+        
+        try:
+            # 1. 创建 venv
+            self.progress_signal.emit("正在创建 ASR 虚拟运行环境...", 10)
+            if not os.path.exists(env_dir):
+                # 使用系统自带的 python3 创建虚拟环境
+                cmd = ["python3", "-m", "venv", env_dir]
+                res = subprocess.run(cmd, capture_output=True, text=True)
+                if res.returncode != 0:
+                    raise Exception(f"创建虚拟环境失败: {res.stderr}")
+            
+            # 2. 安装 pip 依赖
+            self.progress_signal.emit("正在安装 MLX 硬件加速库与语音依赖 (可能需要 1-2 分钟)...", 30)
+            pip_path = os.path.join(env_dir, "bin", "pip")
+            
+            # 推荐使用清华源，国内飞速
+            pip_cmd = [
+                pip_path, "install", 
+                "mlx-audio", "flask", "requests", "flask-cors", "soundfile", "sounddevice", "numpy",
+                "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"
+            ]
+            res = subprocess.run(pip_cmd, capture_output=True, text=True)
+            if res.returncode != 0:
+                # 备用源（原生源）
+                pip_cmd_fallback = [
+                    pip_path, "install", 
+                    "mlx-audio", "flask", "requests", "flask-cors", "soundfile", "sounddevice", "numpy"
+                ]
+                res = subprocess.run(pip_cmd_fallback, capture_output=True, text=True)
+                if res.returncode != 0:
+                    raise Exception(f"依赖安装失败: {res.stderr}")
+
+            # 3. 下载 SenseVoice-Small 4bit 模型权重
+            self.progress_signal.emit("正在连接国内镜像并下载 SenseVoice-Small 模型 (大小约 220MB)...", 60)
+            python_path = os.path.join(env_dir, "bin", "python")
+            
+            # 使用国内 HF 镜像源下载
+            env = os.environ.copy()
+            env["HF_ENDPOINT"] = "https://hf-mirror.com"
+            
+            # 运行 ASR 加载模型（利用 mlx-audio load 的内置 HuggingFace 自动拉取和缓存功能）
+            download_code = (
+                "from mlx_audio.stt import utils; "
+                "print('Downloading SenseVoice-Small...'); "
+                "utils.load('mlx-community/SenseVoiceSmall-4bit')"
+            )
+            download_cmd = [python_path, "-c", download_code]
+            
+            res = subprocess.run(download_cmd, capture_output=True, text=True, env=env)
+            if res.returncode != 0:
+                raise Exception(f"模型下载失败: {res.stderr}")
+            
+            self.progress_signal.emit("本地 ASR 环境配置成功！", 100)
+            self.finished_signal.emit(True, "安装成功")
+        except Exception as e:
+            self.finished_signal.emit(False, str(e))
+
 
 class WorkerSignals(QObject):
     """
@@ -170,11 +289,13 @@ class TranscriptionThread(QThread):
         self.recorder.stop()
 
 class PolishThread(QThread):
-    def __init__(self, llm_client, raw_text, signals):
+    def __init__(self, llm_client, raw_text, signals, system_prompt, no_fallback=False):
         super().__init__()
         self.llm_client = llm_client
         self.raw_text = raw_text
         self.signals = signals
+        self.system_prompt = system_prompt
+        self.no_fallback = no_fallback
 
     def _extract_final_text(self, raw_text):
         text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
@@ -224,7 +345,10 @@ class PolishThread(QThread):
                 continue
             latin_count = len(re.findall(r"[A-Za-z]", stripped))
             cjk_count = len(re.findall(r"[一-鿿]", stripped))
-            if latin_count > max(6, cjk_count * 2):
+            # 纯英文行超过 12 字符才过滤；含中文行仅过滤拉丁字符远多于中文的极端情况
+            if cjk_count == 0 and latin_count > 12:
+                continue
+            if cjk_count > 0 and latin_count > cjk_count * 10:
                 continue
             cleaned_lines.append(stripped)
 
@@ -349,17 +473,14 @@ class PolishThread(QThread):
 
     def run(self):
         raw_response = ""
+        use_fallback = not self.no_fallback
         rule_text = self._rule_based_cleanup(self.raw_text)
-        if self._should_use_fast_cleanup(self.raw_text, rule_text):
+        if use_fallback and self._should_use_fast_cleanup(self.raw_text, rule_text):
             log.debug("使用快速规整路径，跳过 LLM")
             self.signals.polish_finished.emit(rule_text)
             return
 
-        # 精简 system prompt — 越短 prefill 越快，TTFT 越低
-        system_prompt = (
-            "整理以下口语记录：保留原意，删除语气词和口头禅，"
-            "有多个要点时用序号列出。直接输出结果，不要任何解释，不要输出思考过程。"
-        )
+        system_prompt = self.system_prompt
         try:
             t0 = time.time()
             first_token_time = None
@@ -372,10 +493,13 @@ class PolishThread(QThread):
                 raw_response += token
 
             log.info(f"LLM 总耗时: {time.time() - t0:.2f}s")
-            final_text = self._extract_final_text(raw_response)
-            if self._should_prefer_rule_result(final_text, rule_text):
-                log.debug("模型输出偏离原文或仍是分析体，回退到贴近原文的规则清洗")
-                final_text = rule_text
+            if self.no_fallback:
+                final_text = raw_response.strip()
+            else:
+                final_text = self._extract_final_text(raw_response)
+                if self._should_prefer_rule_result(final_text, rule_text):
+                    log.debug("模型输出偏离原文或仍是分析体，回退到贴近原文的规则清洗")
+                    final_text = rule_text
             log.debug(f"最终整理结果长度: {len(final_text)}")
             self.signals.polish_finished.emit(final_text)
         except Exception as e:
@@ -388,18 +512,20 @@ class VCAIWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.load_config()
-        self.init_ui()
 
         self.llm_client = LLMClient()
         self.recorder = AudioRecorder()
         self.stt_client = STTClient()
         self.signals = WorkerSignals()
+        self.scenario_manager = ScenarioManager()
+
+        self.init_ui()
 
         # 严格的信号连接
         self.ui_visibility_signal.connect(self.set_ui_visible)
         self.signals.raw_text_update.connect(self.on_raw_text_update)
         self.signals.raw_text_ready.connect(self.on_raw_text_ready)
-        self.signals.status_update.connect(self.status_label.setText)
+        self.signals.status_update.connect(self.on_status_update)
         self.signals.error_occurred.connect(self.on_error)
         self.signals.polish_finished.connect(self.on_polish_finished)
         self.signals.reset_display.connect(self.reset_display)
@@ -426,20 +552,163 @@ class VCAIWindow(QWidget):
         # 后台发送 warmup 请求，触发 MLX JIT 编译，消除首次推理的冷启动延迟
         threading.Thread(target=self._warmup_llm, daemon=True).start()
 
+        self.asr_process = None
+        # 连接 App 退出信号，安全清理子进程
+        QApplication.instance().aboutToQuit.connect(self.stop_local_asr_service)
+
+        # 如果配置使用本地 ASR，则自动拉起
+        if self.config.get("stt", {}).get("prefer_local") is True:
+            self.start_local_asr_service()
+
+        # 延时 1 秒进行首次运行 ASR 的检测/引导（仅在窗口呈现完毕后温和地引导）
+        QTimer.singleShot(1000, self.check_first_run_asr)
+
     def _warmup_llm(self):
         """用与实际推理相同的 system prompt 预热，确保 prompt cache 命中"""
         try:
             t0 = time.time()
             log.info("正在预热 LLM...")
-            warmup_sys = (
-                "整理以下口语记录：保留原意，删除语气词和口头禅，"
-                "有多个要点时用序号列出。直接输出结果，不要任何解释。"
-            )
+            warmup_sys = self.scenario_manager.get_current_prompt()
             for _ in self.llm_client.stream_polish("你好", warmup_sys):
                 pass
             log.info(f"LLM 预热完成: {time.time() - t0:.2f}s")
         except Exception as e:
             log.warning(f"LLM 预热失败 (不影响使用): {e}")
+
+    def save_config(self):
+        user_config_path = os.path.join(os.path.expanduser("~"), ".voicerttrans", "config.json")
+        try:
+            with open(user_config_path, "w", encoding="utf-8") as f:
+                json.dump(self.config, f, ensure_ascii=False, indent=4)
+            log.info(f"配置已更新并保存至: {user_config_path}")
+        except Exception as e:
+            log.error(f"保存配置失败: {e}")
+
+    def check_first_run_asr(self):
+        is_apple_silicon = sys.platform == "darwin" and platform.machine() == "arm64"
+        if not is_apple_silicon:
+            # 非 Apple Silicon 不支持 MLX，默认直接使用云端
+            stt_conf = self.config.setdefault("stt", {})
+            stt_conf["prefer_local"] = False
+            self.save_config()
+            return
+
+        stt_conf = self.config.setdefault("stt", {})
+        if stt_conf.get("prefer_local") is None:
+            # 首次启动，且是 Apple Silicon Mac
+            reply = QMessageBox.question(
+                self,
+                "启用本地离线语音识别?",
+                "检测到您的电脑支持本地硬件加速语音识别。\n\n"
+                "是否下载并启用本地高性价比 ASR 模型 (SenseVoice-Small)？\n"
+                "（大小约 220MB，启用后您的语音输入将在本地纯离线高速进行，完全不消耗云端流量，内存仅占用约 600MB；若选择“否”则默认使用云端接口）。",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                self.start_asr_installation()
+            else:
+                stt_conf["prefer_local"] = False
+                self.save_config()
+
+    def start_asr_installation(self):
+        # 创建进度对话框
+        self.install_dialog = QProgressDialog("正在准备安装本地 ASR 环境...", "取消", 0, 100, self)
+        self.install_dialog.setWindowTitle("下载并配置 ASR 离线模型")
+        self.install_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.install_dialog.setAutoClose(True)
+        self.install_dialog.setAutoReset(False)
+        self.install_dialog.setMinimumWidth(450)
+        self.install_dialog.show()
+
+        # 创建并启动下载安装线程
+        self.installer_thread = ASRInstallerThread()
+        self.installer_thread.progress_signal.connect(self.on_install_progress)
+        self.installer_thread.finished_signal.connect(self.on_install_finished)
+        self.installer_thread.start()
+
+    def on_install_progress(self, message, progress):
+        if hasattr(self, "install_dialog") and self.install_dialog:
+            self.install_dialog.setLabelText(message)
+            self.install_dialog.setValue(progress)
+
+    def on_install_finished(self, success, message):
+        if hasattr(self, "install_dialog") and self.install_dialog:
+            self.install_dialog.close()
+        
+        stt_conf = self.config.setdefault("stt", {})
+        if success:
+            stt_conf["prefer_local"] = True
+            stt_conf["installed"] = True
+            self.save_config()
+            QMessageBox.information(self, "安装成功", "本地 ASR 离线模型已成功安装并启用！正在为您启动本地识别服务...")
+            self.start_local_asr_service()
+        else:
+            stt_conf["prefer_local"] = False
+            stt_conf["installed"] = False
+            self.save_config()
+            QMessageBox.warning(self, "安装失败", f"本地 ASR 配置失败，已自动切换为云端模式。\n错误详情: {message}")
+
+    def start_local_asr_service(self):
+        # 1. 检查是否在运行
+        try:
+            import requests
+            session = requests.Session()
+            session.trust_env = False
+            r = session.get("http://127.0.0.1:8001/health", timeout=0.5)
+            if r.status_code == 200:
+                log.info("本地 ASR 服务已在运行中，无需重复拉起")
+                return
+        except Exception:
+            pass
+
+        # 2. 检查环境和脚本是否存在
+        user_dir = os.path.join(os.path.expanduser("~"), ".voicerttrans")
+        python_path = os.path.join(user_dir, "asr-env", "bin", "python")
+        
+        # 查找 core/asr_server.py 的路径
+        if getattr(sys, 'frozen', False):
+            bundle_dir = sys._MEIPASS
+        else:
+            bundle_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        server_script = os.path.join(bundle_dir, "core", "asr_server.py")
+        
+        if not os.path.exists(python_path) or not os.path.exists(server_script):
+            log.warning("ASR 环境或服务脚本不存在，无法启动本地服务")
+            return
+
+        # 3. 启动子进程
+        log.info(f"正在后台启动本地 ASR 服务: {python_path} {server_script}")
+        try:
+            # 指定环境变量，以防代理污染 localhost
+            env = os.environ.copy()
+            env["NO_PROXY"] = "127.0.0.1,localhost"
+            
+            self.asr_process = subprocess.Popen(
+                [python_path, server_script, "--port", "8001"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env
+            )
+            log.info("✓ 本地 ASR 服务进程已拉起")
+        except Exception as e:
+            log.error(f"启动本地 ASR 服务进程失败: {e}")
+
+    def stop_local_asr_service(self):
+        if hasattr(self, "asr_process") and self.asr_process:
+            log.info("正在停止本地 ASR 服务...")
+            try:
+                self.asr_process.terminate()
+                self.asr_process.wait(timeout=2)
+            except Exception:
+                try:
+                    self.asr_process.kill()
+                except Exception:
+                    pass
+            self.asr_process = None
+            log.info("✓ 本地 ASR 服务进程已注销")
 
     def _resource_candidates(self, filename):
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -725,6 +994,15 @@ class VCAIWindow(QWidget):
         tray_menu.addAction(f"Hotkey: {hk_str}").setEnabled(False)
 
         tray_menu.addSeparator()
+
+        self._scene_submenu = QMenu("📌 场景")
+        self._rebuild_scene_submenu()
+        tray_menu.addMenu(self._scene_submenu)
+
+        self.tray_menu_edit_action = tray_menu.addAction("✏️ 编辑当前场景指令...")
+        self.tray_menu_edit_action.triggered.connect(self._on_edit_current_scene)
+
+        tray_menu.addSeparator()
         tray_menu.addAction("Quit", QApplication.quit)
 
         self._tray_menu = tray_menu
@@ -814,18 +1092,19 @@ class VCAIWindow(QWidget):
             self.hide()
 
     def on_hotkey_press_worker(self):
-        # 此函数在 Hotkey 线程运行，不能直接操作 UI，只能发信号
+        # 如果正在录音，热键作为停止开关（兼容托盘启动后无法点击图标的情况）
+        if self.trans_thread and self.trans_thread.isRunning():
+            self.tray_auto_recording = False
+            self.signals.status_update.emit("准备就绪")
+            self.on_hotkey_release_worker()
+            return
+
         self._capture_target_app()
         self.ui_visibility_signal.emit(True)
         self.signals.reset_display.emit()
         hk_str = self.config.get("hotkey", DEFAULT_CONFIG["hotkey"]).upper()
         self.signals.status_update.emit(f"正在录音 (松开 {hk_str} 停止)...")
         self._update_tray_tooltip("recording")
-        # 清空文本需通过信号或在 UI 线程处理。这里简单点，直接在 press 时清空（因为 press 时 UI 线程会响应信号显示）
-        # 但为了极度安全，我们把清空也发出去，或者在 safe_show 里做。
-
-        if self.trans_thread and self.trans_thread.isRunning():
-            return
 
         self.trans_thread = TranscriptionThread(self.recorder, self.stt_client, self.signals)
         self.trans_thread.start()
@@ -846,7 +1125,9 @@ class VCAIWindow(QWidget):
         self._update_tray_tooltip("polishing")
         if text and not text.startswith("["):
             self.signals.status_update.emit("识别完成，正在润色...")
-            self.polish_thread = PolishThread(self.llm_client, text, self.signals)
+            current_scene_id = self.scenario_manager.current["id"]
+            no_fallback = current_scene_id != "default"
+            self.polish_thread = PolishThread(self.llm_client, text, self.signals, self.scenario_manager.get_current_prompt(), no_fallback=no_fallback)
             self.polish_thread.start()
 
     @pyqtSlot()
@@ -855,20 +1136,66 @@ class VCAIWindow(QWidget):
 
     @pyqtSlot(str)
     def on_polish_finished(self, final_text):
-        self.signals.status_update.emit("已完成并复制到剪贴板，正在粘贴...")
-        pyperclip.copy(final_text)
-        log.info(f"已复制到剪贴板，目标应用: {self.target_app_name or 'unknown'} ({self.target_bundle_id or 'no-bundle'})")
+        self.signals.status_update.emit("已完成，正在输入...")
+        log.info(f"准备输入文本，目标应用: {self.target_app_name or 'unknown'} ({self.target_bundle_id or 'no-bundle'})")
 
-        def auto_paste():
+        def do_type():
             self.hide()
-            restored = self._restore_target_app()
-            from PyQt6.QtCore import QTimer
-            delay_ms = 180 if restored else 80
-            QTimer.singleShot(delay_ms, self._send_paste_shortcut)
+            self._restore_target_app()
+            # 等焦点完全恢复后再开始键入，避免 Electron 等复杂应用输入管线未就绪
+            QTimer.singleShot(180, lambda: self._input_text(final_text))
 
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(120, auto_paste)
+        QTimer.singleShot(120, do_type)
+
+    def _input_text(self, text):
+        """保存旧剪贴板 → 复制新文本 → CGEvent Cmd+V → 恢复旧剪贴板。"""
+        if not text or sys.platform != "darwin":
+            return
+
+        # 保存旧剪贴板 → 复制新文本 → CGEvent 发 Cmd+V → 延迟恢复旧剪贴板
+        try:
+            old_clip = pyperclip.paste()
+        except Exception:
+            old_clip = ""
+
+        pyperclip.copy(text)
+        self._send_cmd_v_cgevent()
+
+        def restore_clip():
+            try:
+                pyperclip.copy(old_clip)
+            except Exception:
+                pass
+
+        QTimer.singleShot(600, restore_clip)
         self._update_tray_tooltip("ready")
+
+    def _send_cmd_v_cgevent(self):
+        """通过 CGEvent 发送 Cmd+V，不依赖 osascript/System Events。"""
+        try:
+            from Quartz import (
+                CGEventCreateKeyboardEvent,
+                CGEventSetFlags,
+                CGEventPost,
+                kCGHIDEventTap,
+                kCGEventFlagMaskCommand,
+            )
+
+            cmd_down = CGEventCreateKeyboardEvent(None, 55, True)
+            CGEventPost(kCGHIDEventTap, cmd_down)
+
+            v_down = CGEventCreateKeyboardEvent(None, 9, True)
+            CGEventSetFlags(v_down, kCGEventFlagMaskCommand)
+            CGEventPost(kCGHIDEventTap, v_down)
+
+            v_up = CGEventCreateKeyboardEvent(None, 9, False)
+            CGEventPost(kCGHIDEventTap, v_up)
+
+            cmd_up = CGEventCreateKeyboardEvent(None, 55, False)
+            CGEventPost(kCGHIDEventTap, cmd_up)
+        except Exception:
+            # CGEvent 不可用时回退到 osascript（剪贴板已有目标文本，由 _input_text 置入）
+            QTimer.singleShot(80, self._send_paste_shortcut)
 
     def _run_osascript(self, script):
         try:
@@ -962,6 +1289,40 @@ class VCAIWindow(QWidget):
         )
         if ok:
             log.info("已发送 Cmd+V")
+
+    def _rebuild_scene_submenu(self):
+        """重建场景子菜单，更新选中状态。"""
+        self._scene_submenu.clear()
+        current_id = self.scenario_manager.current["id"]
+        for scene in self.scenario_manager.list_all():
+            action = self._scene_submenu.addAction(f"{scene['icon']} {scene['name']}")
+            action.setCheckable(True)
+            action.setChecked(scene["id"] == current_id)
+            action.triggered.connect(
+                lambda checked, sid=scene["id"]: self._on_scene_switch(sid)
+            )
+
+    def _on_scene_switch(self, scenario_id):
+        """切换到指定场景。"""
+        self.scenario_manager.switch_to(scenario_id)
+        self._rebuild_scene_submenu()
+        self._update_tray_tooltip("ready")
+
+    def _on_edit_current_scene(self):
+        """打开编辑当前场景指令的对话框。"""
+        scene = self.scenario_manager.current
+        dialog = EditPromptDialog(scene, self.scenario_manager, self)
+        dialog.exec()
+
+    def _format_status_text(self, base_text):
+        """包装状态文本，非默认场景时加前缀。"""
+        if self.scenario_manager.current["id"] == "default":
+            return base_text
+        return f"[{self.scenario_manager.current['name']}] {base_text}"
+
+    @pyqtSlot(str)
+    def on_status_update(self, base_text):
+        self.status_label.setText(self._format_status_text(base_text))
 
     @pyqtSlot(str)
     def on_error(self, err_msg):

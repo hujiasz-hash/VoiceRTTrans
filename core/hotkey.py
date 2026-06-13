@@ -110,9 +110,17 @@ class HotkeyListener:
             self.on_release_callback()
 
     def _intercept(self, event_type, event):
-        # Suppress all keyboard events while the hotkey is fully active
+        # 不抑制事件（返回 None 会导致 key-up/down 不配对 → 系统提示音）。
+        # 热键激活期间，将所有事件的键码改为越界值 0xFF（macOS 合法范围 0-127），
+        # 并清除所有修饰键标志。事件完整流过系统但不会产生任何字符或触发快捷键。
+        # kCGEventKeyDown=10, kCGEventKeyUp=11, kCGEventFlagsChanged=12
         if self.pressed:
-            return None
+            from Quartz import (
+                CGEventSetIntegerValueField, CGEventSetFlags,
+                kCGKeyboardEventKeycode,
+            )
+            CGEventSetIntegerValueField(event, kCGKeyboardEventKeycode, 0xFF)
+            CGEventSetFlags(event, 0)
         return event
 
     def start(self):

@@ -27,8 +27,9 @@ private let hotkeysList = [
 ]
 
 struct SettingsView: View {
-    @ObservedObject private var recognizer = SpeechRecognizer.shared
-    @ObservedObject private var monitor = GlobalInputMonitor.shared
+    // 改用 @StateObject 以解决老版本 Swift 的重绘与渲染期死锁问题
+    @StateObject private var recognizer = SpeechRecognizer.shared
+    @StateObject private var monitor = GlobalInputMonitor.shared
     
     @State private var selectedHotkeyIndex = 0
     @State private var permissionStatus = false
@@ -49,7 +50,7 @@ struct SettingsView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // 顶栏玻璃反光页眉
+            // 顶栏页眉
             HStack {
                 Text("VoiceFlow 偏好设置")
                     .font(.headline)
@@ -65,7 +66,7 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     
-                    // 1. 激活控制卡片 (自定义 Glassmorphism 卡片代替 GroupBox)
+                    // 1. 激活控制卡片
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 6) {
                             Image(systemName: "bolt.fill")
@@ -134,7 +135,7 @@ struct SettingsView: View {
                         
                         Picker("选择模型", selection: $recognizer.selectedModel) {
                             ForEach(ModelType.allCases, id: \.self) { model in
-                                Text(model.name).tag(model)
+                                                Text(model.name).tag(model)
                             }
                         }
                         
@@ -231,6 +232,8 @@ struct SettingsView: View {
                 .padding()
             }
         }
+        // 显式限制大小，强行撑起 NSHostingController 的尺寸，绝对不让其折叠
+        .frame(width: 420, height: 380)
         .onAppear {
             if let idx = hotkeysList.firstIndex(where: { $0.code == monitor.hotkeyKeyCode }) {
                 selectedHotkeyIndex = idx

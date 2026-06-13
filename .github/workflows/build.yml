@@ -1,0 +1,48 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-macos:
+    runs-on: macos-13 # 建议指定 macos-13 或 macos-14，这里用 macos-13 以保证兼容 Intel / Apple Silicon 平台
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install system dependencies
+        run: |
+          brew install portaudio
+
+      - name: Create Virtual Environment and Install Dependencies
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          # 编译 PyAudio 需要用到 portaudio 的路径，GitHub Actions 环境里需要显式指定
+          export CFLAGS="-I$(brew --prefix portaudio)/include"
+          export LDFLAGS="-L$(brew --prefix portaudio)/lib"
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Application
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Create Release and Upload Artifact
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/VoiceRTTrans-macOS-*.zip
+          name: "VoiceRTTrans ${{ github.ref_name }}"
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

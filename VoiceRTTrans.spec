@@ -15,6 +15,7 @@ a = Analysis(
         ('icon_tray.png', '.'),
         ('icon_tray_recording.png', '.'),
         ('icon_tray_polishing.png', '.'),
+        ('core', 'core'),
     ],
     hiddenimports=[
         'pynput',
@@ -86,7 +87,7 @@ if sys.platform == 'darwin':
             'LSBackgroundOnly': False,
             'LSUIElement': True,
             'CFBundleDisplayName': 'VoiceRTTrans',
-            'CFBundleShortVersionString': '0.1.0',
+            'CFBundleShortVersionString': '0.3.0',
             'CFBundleVersion': '1',
             'NSMicrophoneUsageDescription': 'VoiceRTTrans needs microphone access to record voice.',
             'NSAppleEventsUsageDescription': 'VoiceRTTrans needs to send Apple Events to paste text.',

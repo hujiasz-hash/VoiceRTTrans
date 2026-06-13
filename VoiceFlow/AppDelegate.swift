@@ -24,6 +24,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // 4. 默认将应用隐藏在 Dock 栏，只在托盘显示
         toggleDockIcon(show: false)
+        
+        // 5. 首次启动主动弹出“偏好设置”窗口，引导授权并确保主事件循环保持活跃
+        showSettings()
     }
     
     // MARK: - 交互装配

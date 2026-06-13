@@ -39,6 +39,9 @@ class GlobalInputMonitor: ObservableObject {
     private var eventTapPort: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private(set) var state: RecordingState = .idle
+    private var retryTimer: Timer?
+    private var tapCreateFailCount = 0
+    private var ignoreNextModifierRelease = false
     
     // 关键设计：缓存被吞除的按键 keyCode 及其事件类型，用于防止按键粘滞 (Key Sticking)
     private var swallowedKeyCode: UInt16? = nil
@@ -56,9 +59,10 @@ class GlobalInputMonitor: ObservableObject {
     func startMonitoring() -> Bool {
         guard eventTapPort == nil else { return true }
         
-        // 我们不在此处强弹窗，只做静默检测，如果没有权限则返回 false，在 UI 层做引导
-        guard checkAccessibilityPermissions(promptUser: false) else {
-            print("[VoiceFlow] 启动监听失败：缺少辅助功能（Accessibility）权限。")
+        // 静默检测，如果没有权限则返回 false，在后台启动轮询
+        if !checkAccessibilityPermissions(promptUser: false) {
+            print("[VoiceFlow] 启动监听失败：缺少辅助功能（Accessibility）权限。将自动在后台轮询等待权限授予...")
+            startRetryTimer()
             return false
         }
         
@@ -83,9 +87,20 @@ class GlobalInputMonitor: ObservableObject {
         )
         
         guard let tap = eventTapPort else {
-            print("[VoiceFlow] 创建 EventTap 失败，请检查系统设置。")
+            print("[VoiceFlow] 创建 EventTap 失败。尽管系统报告已授权辅助功能权限，但底层创建失败。这通常意味着 macOS TCC 数据库的签名缓存失效，请在“系统设置 -> 隐私与安全性 -> 辅助功能”中移除 VoiceFlow 并重新添加。")
+            tapCreateFailCount += 1
+            if tapCreateFailCount <= 3 {
+                startRetryTimer()
+            } else {
+                print("[VoiceFlow] 底层创建 EventTap 连续失败多次，已停止自动重试，等待用户手动重启或重新授权。")
+                stopRetryTimer()
+            }
             return false
         }
+        
+        // 成功创建，重置计数器和定时器
+        tapCreateFailCount = 0
+        stopRetryTimer()
         
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         if let source = runLoopSource {
@@ -95,11 +110,13 @@ class GlobalInputMonitor: ObservableObject {
             return true
         }
         
+        startRetryTimer()
         return false
     }
     
     /// 停止 EventTap 监听
     func stopMonitoring() {
+        stopRetryTimer()
         if let tap = eventTapPort {
             CGEvent.tapEnable(tap: tap, enable: false)
         }
@@ -110,6 +127,26 @@ class GlobalInputMonitor: ObservableObject {
         runLoopSource = nil
         state = .idle
         swallowedKeyCode = nil
+    }
+    
+    private func startRetryTimer() {
+        guard retryTimer == nil else { return }
+        
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.retryTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+                guard let self = self else { return }
+                print("[VoiceFlow] 轮询尝试建立 EventTap...")
+                if self.startMonitoring() {
+                    print("[VoiceFlow] 轮询成功，EventTap 已激活，停止轮询定时器。")
+                }
+            }
+        }
+    }
+    
+    private func stopRetryTimer() {
+        retryTimer?.invalidate()
+        retryTimer = nil
     }
     
     /// 核心事件处理与状态机流转
@@ -177,13 +214,22 @@ class GlobalInputMonitor: ObservableObject {
                 // 【模式 B (单击开关/任意键停止)】：
                 // 录音期间，一旦收到任何键盘按键的按下事件（KeyDown/或者是热键再次按下），立即触发停止
                 
-                // 忽略修饰键单独触发（flagsChanged 且非热键），避免按住修饰键误伤
                 if type == .flagsChanged {
-                    if isHotkey && !isModifierPressed(flags) {
-                        // 如果再次按热键释放（比如如果是修饰键热键，再次点击了它并松开）
-                        // 实际上对于修饰键，按一下（flagsChanged）再放开，我们只在 flagsChanged 状态变化时触发
-                        triggerStop()
-                        return nil
+                    if isHotkey {
+                        if isModifierPressed(flags) {
+                            // 再次按下热键修饰键，触发停止
+                            triggerStop()
+                            return nil
+                        } else {
+                            // 释放热键修饰键
+                            if ignoreNextModifierRelease {
+                                ignoreNextModifierRelease = false
+                                return nil // 吞掉第一次松开
+                            } else {
+                                triggerStop()
+                                return nil
+                            }
+                        }
                     }
                     return Unmanaged.passRetained(event)
                 }
@@ -229,6 +275,9 @@ class GlobalInputMonitor: ObservableObject {
     
     private func triggerStart() {
         state = .recording(mode: currentMode)
+        if currentMode == .toggleOrAnyKeyStop && isModifierOnlyHotkey {
+            ignoreNextModifierRelease = true
+        }
         DispatchQueue.main.async { [weak self] in
             self?.onStartRecording?()
         }

@@ -82,7 +82,8 @@ cat <<EOF > "$APP_DIR/Contents/Info.plist"
 EOF
 
 # 5. 对整个 App Bundle 进行本地 ad-hoc 重新签名，以修复因 install_name_tool 破坏的签名
-echo "🔑 正在进行本地 ad-hoc 代码签名..."
+echo "🔑 正在清理扩展属性并进行本地 ad-hoc 代码签名..."
+xattr -cr "$APP_DIR"
 codesign --force --deep --sign - "$APP_DIR"
 echo "✅ 代码签名完成！"
 

@@ -8,6 +8,7 @@ private func cString(_ str: String) -> UnsafePointer<Int8>? {
     return UnsafePointer(ptr)
 }
 
+
 enum ModelType: Int, CaseIterable, Codable {
     case native = 0              // 苹果内置
     case paraformerMini = 1      // 极小模型 (Paraformer-mini)
@@ -55,6 +56,12 @@ enum ModelType: Int, CaseIterable, Codable {
 
 class SpeechRecognizer: ObservableObject {
     static let shared = SpeechRecognizer()
+    
+    private var historyText: String = ""
+    private var isRestartingTask = false
+    private var lastStartTime: Date = Date()
+    private var lastSeenText: String = ""
+    private var lastCallbackTime: Date?
     
     @Published var currentText: String = ""
     @Published var isRecognizing: Bool = false
@@ -118,13 +125,15 @@ class SpeechRecognizer: ObservableObject {
     // MARK: - 引擎初始化与启动
     
     func startRecognition() {
+        print("\n🔵🔵🔵 [DIAG] startRecognition() 被调用 🔵🔵🔵")
         self.currentText = ""
+        self.historyText = ""
         self.isRecognizing = true
         self.offlineAudioBuffer.removeAll()
         
         switch selectedModel {
         case .native:
-            startNativeRecognition()
+            startNativeRecognition(isRestart: false)
         case .paraformerMini, .zipformerBilingual:
             if startOnlineSherpaRecognizer() {
                 // 绑定音频流监听回调，灌入 PCM 数据
@@ -143,12 +152,15 @@ class SpeechRecognizer: ObservableObject {
     }
     
     func stopRecognition(completion: @escaping (String) -> Void) {
+        print("\n🔴🔴🔴 [DIAG] stopRecognition() 被调用 🔴🔴🔴")
+        print("[DIAG] currentText=\"\(currentText)\", historyText=\"\(historyText)\"")
         let finalModel = selectedModel
         
         if finalModel == .native {
+            self.isRecognizing = false
             stopNativeRecognition()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                self?.isRecognizing = false
+                print("[DIAG] stopRecognition completion: finalText=\"\(self?.currentText ?? "")\"")
                 completion(self?.currentText ?? "")
             }
         } else if finalModel == .senseVoice {
@@ -168,35 +180,182 @@ class SpeechRecognizer: ObservableObject {
     
     // MARK: - 1. 苹果原生 ASR 实现
     
-    private func startNativeRecognition() {
-        nativeTask?.cancel()
+    private func startNativeRecognition(isRestart: Bool = false) {
+        let taskId = Int.random(in: 1000...9999)  // 为每次调用生成唯一标识
+        print("\n🟢 [DIAG-\(taskId)] startNativeRecognition(isRestart: \(isRestart)) 进入")
+        print("[DIAG-\(taskId)] 当前 currentText=\"\(self.currentText)\"")
+        print("[DIAG-\(taskId)] 当前 historyText=\"\(self.historyText)\"")
+        print("[DIAG-\(taskId)] 当前 isRecognizing=\(self.isRecognizing)")
+        print("[DIAG-\(taskId)] 当前线程: \(Thread.isMainThread ? "主线程" : "后台线程")")
+        
+        if !isRestart {
+            self.historyText = ""
+        }
+        self.lastSeenText = ""
+        self.lastCallbackTime = nil
+        self.isRestartingTask = false
+        self.lastStartTime = Date() // 记录本次 Task 的启动时间戳
+        
+        // 关键修复：先在主线程切断引用（nativeTask = nil），再发送取消信号
+        // 这样一来，cancel() 触发的 cancellation 回调执行时，
+        // self.nativeTask 已经是 nil，self.nativeTask === currentTask 必然为 false，
+        // 旧闭包会被瞬间拦截，彻底阻断级联取消风暴
+        let oldTask = nativeTask
+        let oldRequest = nativeRequest
         nativeTask = nil
+        nativeRequest = nil
+        oldRequest?.endAudio()
+        oldTask?.cancel()
         
         nativeRequest = SFSpeechAudioBufferRecognitionRequest()
         guard let request = nativeRequest, let recognizer = nativeRecognizer else {
-            self.currentText = "❌ 原生 SpeechRecognizer 初始化失败"
-            self.isRecognizing = false
+            print("❌ [DIAG-\(taskId)] 初始化失败！nativeRequest=\(nativeRequest == nil ? "nil" : "ok"), nativeRecognizer=\(nativeRecognizer == nil ? "nil" : "ok")")
+            if !isRestart {
+                self.currentText = "❌ 原生 SpeechRecognizer 初始化失败"
+                self.isRecognizing = false
+            }
             return
         }
         
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = true
         
+        var latestText = self.currentText
+        print("[DIAG-\(taskId)] latestText 初始化为: \"\(latestText)\"")
+        
         AudioStreamManager.shared.onNativeBufferReceived = { [weak self] buffer in
             self?.nativeRequest?.append(buffer)
         }
         
-        nativeTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+        // 1. 同步声明外部的可选变量，规避编译期自我捕获初始化错误
+        var currentTask: SFSpeechRecognitionTask? = nil
+        
+        let task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             guard let self = self else { return }
+            
+            let isTaskMatch = self.nativeTask != nil && self.nativeTask === currentTask
+            print("\n📨 [DIAG-\(taskId)] 回调触发: isTaskMatch=\(isTaskMatch), hasResult=\(result != nil), hasError=\(error != nil), isFinal=\(result?.isFinal ?? false)")
+            print("[DIAG-\(taskId)] 回调线程: \(Thread.isMainThread ? "主线程" : "后台线程")")
+            print("[DIAG-\(taskId)] isRecognizing=\(self.isRecognizing), isRestartingTask=\(self.isRestartingTask)")
+            print("[DIAG-\(taskId)] currentText=\"\(self.currentText)\"")
+            print("[DIAG-\(taskId)] historyText=\"\(self.historyText)\"")
+            print("[DIAG-\(taskId)] latestText(闭包内)=\"\(latestText)\"")
+            
+            if let error = error {
+                print("[DIAG-\(taskId)] error详情: \(error)")
+            }
             if let result = result {
+                print("[DIAG-\(taskId)] bestTranscription=\"\(result.bestTranscription.formattedString)\", isFinal=\(result.isFinal)")
+            }
+            
+            // 2. 核心比对：使用 === 比对引用，只接受当前活跃 Task，忽略已废弃/设为 nil 的 Task 的回调
+            guard isTaskMatch else {
+                print("⛔ [DIAG-\(taskId)] 回调被 guard 拦截（task 不匹配或已 nil）")
+                return
+            }
+            
+            var shouldRestart = false
+            
+            if let result = result {
+                let newText = result.bestTranscription.formattedString
+                let currentTime = Date()
+                
+                // 探测 ASR 是否在内部重置了文本（比如在静音停顿后）
+                var isInternalReset = false
+                if !self.lastSeenText.isEmpty {
+                    let timeGap = self.lastCallbackTime.map { currentTime.timeIntervalSince($0) } ?? 0
+                    let prefixLen = self.commonPrefixLength(self.lastSeenText, newText)
+                    
+                    if timeGap > 1.5 && (newText.count < self.lastSeenText.count || prefixLen < 2) {
+                        isInternalReset = true
+                    } else if self.lastSeenText.count >= 4 && newText.count < self.lastSeenText.count - 2 && prefixLen < 2 {
+                        isInternalReset = true
+                    }
+                }
+                
+                if isInternalReset {
+                    let sep = self.shouldAddSpaceBetween(self.historyText, self.lastSeenText) ? " " : ""
+                    self.historyText = self.historyText + sep + self.lastSeenText
+                    print("🔄 [DIAG-\(taskId)] 检测到 ASR 内部重置! 将已识别文本 \"\(self.lastSeenText)\" 存入 historyText, 新 historyText=\"\(self.historyText)\"")
+                }
+                
+                self.lastSeenText = newText
+                self.lastCallbackTime = currentTime
+                
+                let separator = self.shouldAddSpaceBetween(self.historyText, newText) ? " " : ""
+                let computedText = self.historyText + separator + newText
+                print("[DIAG-\(taskId)] 拼接计算: historyText(\"\(self.historyText)\") + separator(\"\(separator)\") + newText(\"\(newText)\") = \"\(computedText)\"")
+                latestText = computedText
+                
                 DispatchQueue.main.async {
-                    self.currentText = result.bestTranscription.formattedString
+                    print("[DIAG-\(taskId)] 主线程设置 currentText = \"\(latestText)\"")
+                    self.currentText = latestText
+                }
+                
+                // 防线一：只有当有实际识别文本时，isFinal 结束才触发重启；若为空 final 则直接忽略
+                if result.isFinal && !newText.isEmpty {
+                    print("🔄 [DIAG-\(taskId)] isFinal=true 且文本非空，标记 shouldRestart")
+                    shouldRestart = true
                 }
             }
-            if error != nil {
-                self.stopNativeRecognition()
+            
+            if let error = error {
+                print("🔄 [DIAG-\(taskId)] 有 error，标记 shouldRestart: \(error.localizedDescription)")
+                shouldRestart = true
+            }
+            
+            if shouldRestart {
+                // 防线二：距离上次启动必须大于 1.2 秒，防止高频 cancel 产生的级联回荡清空文本
+                let timeSinceStart = Date().timeIntervalSince(self.lastStartTime)
+                print("[DIAG-\(taskId)] shouldRestart=true, timeSinceStart=\(timeSinceStart)s, isRecognizing=\(self.isRecognizing), isRestartingTask=\(self.isRestartingTask)")
+                
+                if self.isRecognizing && !self.isRestartingTask && timeSinceStart > 1.2 {
+                    self.isRestartingTask = true
+                    // 防线三（最终安全网）：只有当 latestText 比当前 historyText 更长时才更新
+                    // 这确保任何时序竞争或空回调都无法用更短/更空的文本覆写已积累的历史文本
+                    let textToSave = latestText.count > self.historyText.count ? latestText : self.historyText
+                    print("✅ [DIAG-\(taskId)] 将执行重启! textToSave=\"\(textToSave)\", latestText.count=\(latestText.count), historyText.count=\(self.historyText.count)")
+                    DispatchQueue.main.async {
+                        print("[DIAG-\(taskId)] 主线程重启: 设置 historyText=\"\(textToSave)\", 然后调用 startNativeRecognition(isRestart: true)")
+                        self.historyText = textToSave
+                        self.startNativeRecognition(isRestart: true)
+                    }
+                } else if !self.isRecognizing {
+                    print("🛑 [DIAG-\(taskId)] isRecognizing=false, 调用 stopNativeRecognition()")
+                    self.stopNativeRecognition()
+                } else {
+                    print("⏳ [DIAG-\(taskId)] 重启被阻止: timeSinceStart=\(timeSinceStart)s (需>1.2s), isRestartingTask=\(self.isRestartingTask)")
+                }
             }
         }
+        
+        // 3. 同步赋值
+        currentTask = task
+        self.nativeTask = task
+    }
+    
+    private func shouldAddSpaceBetween(_ prev: String, _ next: String) -> Bool {
+        guard !prev.isEmpty, !next.isEmpty else { return false }
+        guard let lastChar = prev.last, let firstChar = next.first else { return false }
+        
+        let isLastEnglishOrNum = (lastChar.isLetter || lastChar.isNumber) && lastChar.asciiValue != nil
+        let isFirstEnglishOrNum = (firstChar.isLetter || firstChar.isNumber) && firstChar.asciiValue != nil
+        
+        return isLastEnglishOrNum && isFirstEnglishOrNum
+    }
+    
+    private func commonPrefixLength(_ s1: String, _ s2: String) -> Int {
+        var length = 0
+        let chars1 = Array(s1)
+        let chars2 = Array(s2)
+        for i in 0..<min(chars1.count, chars2.count) {
+            if chars1[i] == chars2[i] {
+                length += 1
+            } else {
+                break
+            }
+        }
+        return length
     }
     
     private func stopNativeRecognition() {

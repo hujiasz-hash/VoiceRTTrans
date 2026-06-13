@@ -250,6 +250,9 @@ struct SettingsView: View {
         let auth = monitor.checkAccessibilityPermissions(promptUser: false)
         if permissionStatus != auth {
             permissionStatus = auth
+            if auth {
+                _ = monitor.startMonitoring()
+            }
         }
     }
 }

@@ -139,6 +139,22 @@ struct SettingsView: View {
                             }
                         }
                         
+                        if recognizer.selectedModel == .native || recognizer.selectedModel == .senseVoice {
+                            HStack {
+                                Text("识别语言")
+                                    .font(.subheadline)
+                                Spacer()
+                                Picker("识别语言", selection: $recognizer.selectedLanguage) {
+                                    Text("自动/双语 (Auto)").tag("auto")
+                                    Text("中文 (Zh)").tag("zh")
+                                    Text("英文 (En)").tag("en")
+                                }
+                                .pickerStyle(SegmentedPickerStyle())
+                                .frame(width: 220)
+                            }
+                            .padding(.top, 4)
+                        }
+                        
                         if recognizer.selectedModel == .native {
                             Text("✅ 采用 macOS 系统原生 Speech 框架，零下载，ANE 硬件加速。")
                                 .font(.caption)

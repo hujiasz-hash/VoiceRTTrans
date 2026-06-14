@@ -67,6 +67,14 @@ class SpeechRecognizer: ObservableObject {
     @Published var isRecognizing: Bool = false
     @Published var selectedModel: ModelType = .native
     
+    // ASR 语言设置：auto, zh, en
+    @Published var selectedLanguage: String = "auto" {
+        didSet {
+            UserDefaults.standard.set(selectedLanguage, forKey: "selectedLanguage")
+            updateNativeRecognizer()
+        }
+    }
+    
     // 下载状态管理
     @Published var downloadProgress: Double = 0.0
     @Published var isDownloading = false
@@ -86,8 +94,27 @@ class SpeechRecognizer: ObservableObject {
     
     
     private init() {
-        // 尝试初始化系统内置识别器，默认中文
-        nativeRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
+        let lang = UserDefaults.standard.string(forKey: "selectedLanguage") ?? "auto"
+        self.selectedLanguage = lang
+        
+        let localeId: String
+        switch lang {
+        case "zh": localeId = "zh-CN"
+        case "en": localeId = "en-US"
+        default: localeId = Locale.current.identifier.contains("en") ? "en-US" : "zh-CN"
+        }
+        self.nativeRecognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId))
+    }
+    
+    private func updateNativeRecognizer() {
+        let localeId: String
+        switch selectedLanguage {
+        case "zh": localeId = "zh-CN"
+        case "en": localeId = "en-US"
+        default: localeId = Locale.current.identifier.contains("en") ? "en-US" : "zh-CN"
+        }
+        nativeRecognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId))
+        print("[VoiceFlow] 原生 ASR 语言更新为: \(localeId)")
     }
     
     // MARK: - 模型存储路径管理
@@ -475,7 +502,7 @@ class SpeechRecognizer: ObservableObject {
         
         config.model_config.sense_voice.model = cString(modelPath)
         config.model_config.tokens = cString(tokensPath)
-        config.model_config.sense_voice.language = cString("")
+        config.model_config.sense_voice.language = cString(selectedLanguage)
         config.model_config.sense_voice.use_itn = 1
         
         let recognizer = SherpaOnnxCreateOfflineRecognizer(&config)

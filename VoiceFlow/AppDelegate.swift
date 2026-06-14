@@ -84,34 +84,85 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     /// 动态修改状态栏的托盘图标
     private func updateStatusIcon(named name: String) {
-        guard let button = statusItem?.button else { return }
-        if let customImage = NSImage(named: name) {
+        print("[VoiceFlow] 尝试更新托盘图标为: \(name)...")
+        guard let button = statusItem?.button else {
+            print("[VoiceFlow] ❌ 失败: statusItem.button 不存在")
+            return
+        }
+        
+        var image: NSImage? = nil
+        // 优先尝试从 Bundle 路径读取 PNG
+        if let path = Bundle.main.path(forResource: name, ofType: "png") {
+            image = NSImage(contentsOfFile: path)
+            print("[VoiceFlow] 从 Bundle 路径成功读取: \(path)")
+        }
+        
+        // Fallback 尝试使用 NSImage(named:)
+        if image == nil {
+            image = NSImage(named: name)
+            if image != nil {
+                print("[VoiceFlow] 通过 NSImage(named:) 成功加载: \(name)")
+            }
+        }
+        
+        if let customImage = image {
+            // 关键：对物理分辨率是 64x64 的图片强制指定渲染逻辑大小为 18x18
+            customImage.size = NSSize(width: 18, height: 18)
             customImage.isTemplate = true
             button.image = customImage
+            print("[VoiceFlow] 自定义图标已成功设置到状态栏，并强制设定尺寸为 18x18")
         } else {
-            // 如果加载自定义图标失败，fallback 到系统 SF Symbols
+            print("[VoiceFlow] ⚠️ 加载自定义图标失败，正在退回至 SF Symbols...")
             let fallbackName = name == "icon_tray_recording" ? "mic.circle.fill" : "waveform.circle"
-            let fallbackImage = NSImage(systemSymbolName: fallbackName, accessibilityDescription: "VoiceFlow")
-            fallbackImage?.isTemplate = true
-            button.image = fallbackImage
+            if let fallbackImage = NSImage(systemSymbolName: fallbackName, accessibilityDescription: "VoiceFlow") {
+                fallbackImage.isTemplate = true
+                button.image = fallbackImage
+                print("[VoiceFlow] 成功设置 SF Symbols 图标: \(fallbackName)")
+            } else {
+                print("[VoiceFlow] ❌ 严重错误: SF Symbols '\(fallbackName)' 加载失败")
+            }
         }
     }
     
     // MARK: - 托盘与窗口管理
     
     private func setupStatusItem() {
+        print("[VoiceFlow] 初始化状态栏托盘按钮...")
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
-            // 优先从 Bundle 中加载自定义的 "icon_tray" 资源 (自动匹配 @2x, 且支持 dark/light 模式)
-            if let customImage = NSImage(named: "icon_tray") {
+            print("[VoiceFlow] 成功获取 statusItem.button，开始加载默认图标 'icon_tray'")
+            
+            var image: NSImage? = nil
+            // 优先尝试从 Bundle 路径读取 PNG
+            if let path = Bundle.main.path(forResource: "icon_tray", ofType: "png") {
+                image = NSImage(contentsOfFile: path)
+                print("[VoiceFlow] 默认图标从 Bundle 路径加载成功")
+            }
+            
+            if image == nil {
+                image = NSImage(named: "icon_tray")
+                if image != nil {
+                    print("[VoiceFlow] 默认图标通过 NSImage(named:) 加载成功")
+                }
+            }
+            
+            if let customImage = image {
+                customImage.size = NSSize(width: 18, height: 18)
                 customImage.isTemplate = true
                 button.image = customImage
+                print("[VoiceFlow] 默认自定义图标加载并设置成功 (18x18)")
             } else {
-                // 系统自带的波形标志作为 Fallback
-                let fallbackImage = NSImage(systemSymbolName: "waveform.circle", accessibilityDescription: "VoiceFlow")
-                fallbackImage?.isTemplate = true
-                button.image = fallbackImage
+                print("[VoiceFlow] ⚠️ 默认自定义图标加载失败，退回至 SF Symbol 'waveform.circle'...")
+                if let fallbackImage = NSImage(systemSymbolName: "waveform.circle", accessibilityDescription: "VoiceFlow") {
+                    fallbackImage.isTemplate = true
+                    button.image = fallbackImage
+                    print("[VoiceFlow] 成功设置默认 SF Symbol 图标")
+                } else {
+                    print("[VoiceFlow] ❌ 严重错误: 默认 SF Symbol 'waveform.circle' 加载失败")
+                }
             }
+        } else {
+            print("[VoiceFlow] ❌ 严重错误: 无法获取 statusItem.button")
         }
         
         // 构造托盘下拉菜单并直接绑定到 statusItem，以实现更原生的点击交互且避免 popUpMenu 废弃警告
@@ -120,6 +171,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "退出 VoiceFlow", action: #selector(terminateApp), keyEquivalent: "q"))
         statusItem?.menu = menu
+        print("[VoiceFlow] 托盘菜单绑定完成")
     }
     
     private func setupOverlayPanel() {

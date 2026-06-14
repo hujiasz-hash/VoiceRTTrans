@@ -4,6 +4,22 @@ class TextInjector {
     
     /// 将文本安全粘贴到当前激活焦点的文本框中，并在粘贴后自动恢复原剪贴板内容
     static func injectTextViaPasteboard(_ text: String) {
+        var processedText = text
+        
+        let filterFiller = UserDefaults.standard.object(forKey: "filterFillerWords") as? Bool ?? true
+        let formatStructured = UserDefaults.standard.object(forKey: "enableStructuredFormatting") as? Bool ?? true
+        
+        if filterFiller {
+            processedText = ASRTextProcessor.filterFillerWords(processedText)
+        }
+        if formatStructured {
+            processedText = ASRTextProcessor.formatStructuredInput(processedText)
+        }
+        
+        if processedText.isEmpty {
+            return
+        }
+        
         let pasteboard = NSPasteboard.general
         
         // 1. 备份原剪贴板内容（保存所有支持的类型和数据）
@@ -23,7 +39,7 @@ class TextInjector {
         // 2. 将识别文本写入剪贴板
         pasteboard.clearContents()
         pasteboard.declareTypes([.string], owner: nil)
-        pasteboard.setString(text, forType: .string)
+        pasteboard.setString(processedText, forType: .string)
         
         // 3. 模拟键盘按下 Command + V 组合键进行粘贴
         simulateCommandV()

@@ -35,6 +35,7 @@ swiftc \
   "$WORKSPACE/VoiceFlow/AppDelegate.swift" \
   "$WORKSPACE/VoiceFlow/Services/GlobalInputMonitor.swift" \
   "$WORKSPACE/VoiceFlow/Services/TextInjector.swift" \
+  "$WORKSPACE/VoiceFlow/Services/ASRTextProcessor.swift" \
   "$WORKSPACE/VoiceFlow/Models/AudioStreamManager.swift" \
   "$WORKSPACE/VoiceFlow/Models/SpeechRecognizer.swift" \
   "$WORKSPACE/VoiceFlow/Views/FloatingPanel.swift" \

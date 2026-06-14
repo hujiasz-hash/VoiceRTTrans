@@ -31,6 +31,9 @@ struct SettingsView: View {
     @StateObject private var recognizer = SpeechRecognizer.shared
     @StateObject private var monitor = GlobalInputMonitor.shared
     
+    @AppStorage("filterFillerWords") private var filterFillerWords = true
+    @AppStorage("enableStructuredFormatting") private var enableStructuredFormatting = true
+    
     @State private var selectedHotkeyIndex = 0
     @State private var permissionStatus = false
     
@@ -190,7 +193,36 @@ struct SettingsView: View {
                             .stroke(Color.white.opacity(0.1), lineWidth: 1)
                     )
                     
-                    // 4. 权限授权状态卡片
+                    // 4. 文本自动优化卡片
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .foregroundColor(Color(NSColor.systemTeal))
+                            Text("文本自动优化")
+                                .font(.subheadline)
+                                .bold()
+                        }
+                        
+                        VStack(spacing: 8) {
+                            Toggle("过滤多余语气词 (如：呃、啊、嗯、那个等)", isOn: $filterFillerWords)
+                                .toggleStyle(CheckboxToggleStyle())
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            
+                            Toggle("智能列表排版 (自动分段 12345 结构化输入)", isOn: $enableStructuredFormatting)
+                                .toggleStyle(CheckboxToggleStyle())
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .padding()
+                    .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    )
+                    
+                    // 5. 权限授权状态卡片
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 6) {
                             Image(systemName: "lock.shield")

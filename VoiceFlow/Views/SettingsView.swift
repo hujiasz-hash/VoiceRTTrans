@@ -145,12 +145,13 @@ struct SettingsView: View {
                                     .font(.subheadline)
                                 Spacer()
                                 Picker("识别语言", selection: $recognizer.selectedLanguage) {
-                                    Text("自动/双语 (Auto)").tag("auto")
-                                    Text("中文 (Zh)").tag("zh")
-                                    Text("英文 (En)").tag("en")
+                                    Text("自动").tag("auto")
+                                    Text("中文").tag("zh")
+                                    Text("英文").tag("en")
                                 }
                                 .pickerStyle(SegmentedPickerStyle())
-                                .frame(width: 220)
+                                .labelsHidden()
+                                .frame(width: 200)
                             }
                             .padding(.top, 4)
                         }

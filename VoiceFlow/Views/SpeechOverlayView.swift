@@ -3,15 +3,21 @@ import Combine
 
 // MARK: - 适配 SwiftUI 的 AppKit 毛玻璃材质组件
 struct VisualEffectView: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .popover
-    var blendingMode: NSVisualEffectView.BlendingMode = .withinWindow
+    var material: NSVisualEffectView.Material = .hudWindow
+    var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
     var state: NSVisualEffectView.State = .active
+    var cornerRadius: CGFloat = 21
 
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = material
         view.blendingMode = blendingMode
         view.state = state
+        
+        // 显式启用 Layer 并剪裁物理圆角，消灭任何系统可能渲染出来的四角淡色直角框
+        view.wantsLayer = true
+        view.layer?.cornerRadius = cornerRadius
+        view.layer?.masksToBounds = true
         return view
     }
 
@@ -19,6 +25,7 @@ struct VisualEffectView: NSViewRepresentable {
         nsView.material = material
         nsView.blendingMode = blendingMode
         nsView.state = state
+        nsView.layer?.cornerRadius = cornerRadius
     }
 }
 
@@ -63,7 +70,7 @@ struct LiquidBackgroundView: View {
             Circle()
                 .fill(
                     LinearGradient(
-                        gradient: Gradient(colors: [accentColor.opacity(0.12), accentColor.opacity(0.02)]),
+                        gradient: Gradient(colors: [accentColor.opacity(0.35), accentColor.opacity(0.05)]),
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
@@ -76,7 +83,7 @@ struct LiquidBackgroundView: View {
             Circle()
                 .fill(
                     LinearGradient(
-                        gradient: Gradient(colors: [Color(NSColor.selectedControlColor).opacity(0.08), accentColor.opacity(0.01)]),
+                        gradient: Gradient(colors: [Color(NSColor.selectedControlColor).opacity(0.25), accentColor.opacity(0.02)]),
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
@@ -114,12 +121,11 @@ struct SpeechOverlayView: View {
     
     var body: some View {
         ZStack {
-            // 1. 底层：Siri 风格液态流光融合
-            LiquidBackgroundView()
+            // 1. 最底层：AppKit 毛玻璃材质，物理裁剪圆角，混合屏幕背景，提供通透磨砂底色
+            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow, state: .active, cornerRadius: 21)
             
-            // 2. 中层：毛玻璃材质
-            VisualEffectView(material: .popover, blendingMode: .withinWindow, state: .active)
-                .opacity(0.9)
+            // 2. 中层：Siri 风格液态流光融合（叠在磨砂上方，确保流光可见且不被遮挡）
+            LiquidBackgroundView()
             
             // 3. 内容层
             HStack(spacing: 8) {

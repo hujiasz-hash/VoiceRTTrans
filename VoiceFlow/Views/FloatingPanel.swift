@@ -22,7 +22,7 @@ class FloatingPanel: NSPanel {
         self.isOpaque = false
         self.backgroundColor = .clear // 透明背景，以便由 SwiftUI 毛玻璃面板接管外观
         
-        self.hasShadow = true
+        self.hasShadow = false
         self.hidesOnDeactivate = false
         self.ignoresMouseEvents = false // 允许接收鼠标拖拽和点击（比如拖拽悬浮窗）
     }

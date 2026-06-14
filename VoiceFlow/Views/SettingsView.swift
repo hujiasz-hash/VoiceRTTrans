@@ -233,7 +233,7 @@ struct SettingsView: View {
             }
         }
         // 显式限制大小，强行撑起 NSHostingController 的尺寸，绝对不让其折叠
-        .frame(width: 420, height: 380)
+        .frame(width: 420, height: 580)
         .onAppear {
             if let idx = hotkeysList.firstIndex(where: { $0.code == monitor.hotkeyKeyCode }) {
                 selectedHotkeyIndex = idx

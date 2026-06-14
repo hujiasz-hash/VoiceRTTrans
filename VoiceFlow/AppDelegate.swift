@@ -25,11 +25,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // 3. 构造无焦点悬浮窗
         setupOverlayPanel()
-        
-        // 4. 首次启动主动弹出“偏好设置”窗口，延迟 0.3 秒执行以避免启动时激活策略切换导致的托盘刷新冲突
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.showSettings()
-        }
     }
     
     // MARK: - 交互装配
@@ -131,10 +126,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func setupStatusItem() {
         print("[VoiceFlow] 初始化状态栏托盘按钮...")
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
-            button.title = "VF"
-            print("[VoiceFlow] 成功获取 statusItem.button，设置临时 title='VF'，开始加载默认图标 'icon_tray'")
+            print("[VoiceFlow] 成功获取 statusItem.button，开始加载默认图标 'icon_tray'")
             
             var image: NSImage? = nil
             // 优先尝试从 Bundle 路径读取 PNG
@@ -253,7 +247,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let hostingController = NSHostingController(rootView: settingsView)
         
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 380),
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 580),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false

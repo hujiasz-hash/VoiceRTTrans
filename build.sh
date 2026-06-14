@@ -17,15 +17,21 @@ mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Frameworks"
 mkdir -p "$APP_DIR/Contents/Resources"
 
+# 1.5 拷贝本地 icon 资源文件
+if [ -d "$WORKSPACE/icon" ]; then
+    echo "🎨 发现本地 icon 目录，正在拷贝图标到 App Resources 目录..."
+    cp "$WORKSPACE/icon/"*.png "$APP_DIR/Contents/Resources/" 2>/dev/null || true
+fi
+
 # 2. 编译 Swift 源码
 echo "💻 正在编译 Swift 源代码..."
-swiftc -parse-as-library \
+swiftc \
   -import-objc-header "$WORKSPACE/VoiceFlow-Bridging-Header.h" \
   -I "$WORKSPACE/libs" \
   -L "$WORKSPACE/libs" \
   -lsherpa-onnx-c-api \
   -Xlinker -rpath -Xlinker "@executable_path/../Frameworks" \
-  "$WORKSPACE/VoiceFlow/VoiceFlowApp.swift" \
+  "$WORKSPACE/VoiceFlow/main.swift" \
   "$WORKSPACE/VoiceFlow/AppDelegate.swift" \
   "$WORKSPACE/VoiceFlow/Services/GlobalInputMonitor.swift" \
   "$WORKSPACE/VoiceFlow/Services/TextInjector.swift" \

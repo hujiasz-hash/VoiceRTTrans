@@ -52,39 +52,42 @@ struct FadeOutMask: ViewModifier {
 struct LiquidBackgroundView: View {
     @State private var animate = false
     
+    // 获取系统的 Accent Color，自适应 macOS 的色彩风格
+    private var accentColor: Color {
+        Color(NSColor.controlAccentColor)
+    }
+    
     var body: some View {
         ZStack {
-            // 背景渐变圆球 1 (偏冷色调，使用 blue 替代较新系统的 indigo)
+            // 背景渐变圆球 1 (系统 Accent Color 极淡色调)
             Circle()
                 .fill(
                     LinearGradient(
-                        gradient: Gradient(colors: [Color.blue.opacity(0.85), Color.purple.opacity(0.85)]),
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: 70, height: 70)
-                .offset(x: animate ? -25 : 30, y: animate ? 10 : -15)
-                .scaleEffect(animate ? 1.25 : 0.8)
-            
-            // 背景渐变圆球 2 (偏暖色调)
-            Circle()
-                .fill(
-                    LinearGradient(
-                        gradient: Gradient(colors: [Color.pink.opacity(0.85), Color.orange.opacity(0.75)]),
+                        gradient: Gradient(colors: [accentColor.opacity(0.12), accentColor.opacity(0.02)]),
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
                 )
                 .frame(width: 80, height: 80)
-                .offset(x: animate ? 30 : -25, y: animate ? -10 : 15)
-                .scaleEffect(animate ? 0.8 : 1.2)
+                .offset(x: animate ? -20 : 20, y: animate ? 8 : -8)
+                .scaleEffect(animate ? 1.15 : 0.85)
+            
+            // 背景渐变圆球 2 (另一个系统偏色淡色调，可以使用 selectedControlColor 进行柔和混色)
+            Circle()
+                .fill(
+                    LinearGradient(
+                        gradient: Gradient(colors: [Color(NSColor.selectedControlColor).opacity(0.08), accentColor.opacity(0.01)]),
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 90, height: 90)
+                .offset(x: animate ? 20 : -20, y: animate ? -8 : 8)
+                .scaleEffect(animate ? 0.85 : 1.15)
         }
-        .blur(radius: 14)
-        .contrast(25)
-        .colorMultiply(Color.white.opacity(0.82))
+        .blur(radius: 12)
         .onAppear {
-            withAnimation(Animation.easeInOut(duration: 4.5).repeatForever(autoreverses: true)) {
+            withAnimation(Animation.easeInOut(duration: 5.5).repeatForever(autoreverses: true)) {
                 animate.toggle()
             }
         }

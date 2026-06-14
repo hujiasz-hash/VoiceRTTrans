@@ -80,20 +80,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
-            // 系统自带的波形标志
-            button.image = NSImage(systemSymbolName: "waveform.circle", accessibilityDescription: "VoiceFlow")
-            button.action = #selector(statusItemClicked)
-            button.target = self
+            // 优先从 Bundle 中加载自定义的 "icon" 资源 (自动匹配 @2x, 且支持 dark/light 模式)
+            if let customImage = NSImage(named: "icon") {
+                customImage.isTemplate = true
+                button.image = customImage
+            } else {
+                // 系统自带的波形标志作为 Fallback
+                let fallbackImage = NSImage(systemSymbolName: "waveform.circle", accessibilityDescription: "VoiceFlow")
+                fallbackImage?.isTemplate = true
+                button.image = fallbackImage
+            }
         }
-    }
-    
-    @objc private func statusItemClicked() {
-        // 点击托盘直接弹出下拉菜单
+        
+        // 构造托盘下拉菜单并直接绑定到 statusItem，以实现更原生的点击交互且避免 popUpMenu 废弃警告
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "偏好设置...", action: #selector(showSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "退出 VoiceFlow", action: #selector(terminateApp), keyEquivalent: "q"))
-        statusItem?.popUpMenu(menu)
+        statusItem?.menu = menu
     }
     
     private func setupOverlayPanel() {

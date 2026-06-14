@@ -43,6 +43,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // 展现悬浮面板
             self.showOverlayPanel()
             
+            // 动态切换为录音中图标
+            self.updateStatusIcon(named: "icon_tray_recording")
+            
             // 启动录音与识别
             do {
                 try audioManager.startRecording()
@@ -57,15 +60,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.onStopRecording = { [weak self] in
             guard let self = self else { return }
             
+            // 动态切换为识别中图标
+            self.updateStatusIcon(named: "icon_tray_polishing")
+            
             // 结束识别并自动注入粘贴
             recognizer.stopRecognition { finalOutput in
                 if !finalOutput.isEmpty {
                     TextInjector.injectTextViaPasteboard(finalOutput)
                 }
                 
-                // 延迟淡出隐藏悬浮面板，提供视觉缓冲
+                // 延迟淡出隐藏悬浮面板，提供视觉缓冲并切回普通图标
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                     self.hideOverlayPanel()
+                    self.updateStatusIcon(named: "icon_tray")
                 }
             }
             audioManager.stopRecording()
@@ -75,13 +82,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         _ = monitor.startMonitoring()
     }
     
+    /// 动态修改状态栏的托盘图标
+    private func updateStatusIcon(named name: String) {
+        guard let button = statusItem?.button else { return }
+        if let customImage = NSImage(named: name) {
+            customImage.isTemplate = true
+            button.image = customImage
+        } else {
+            // 如果加载自定义图标失败，fallback 到系统 SF Symbols
+            let fallbackName = name == "icon_tray_recording" ? "mic.circle.fill" : "waveform.circle"
+            let fallbackImage = NSImage(systemSymbolName: fallbackName, accessibilityDescription: "VoiceFlow")
+            fallbackImage?.isTemplate = true
+            button.image = fallbackImage
+        }
+    }
+    
     // MARK: - 托盘与窗口管理
     
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
-            // 优先从 Bundle 中加载自定义的 "icon" 资源 (自动匹配 @2x, 且支持 dark/light 模式)
-            if let customImage = NSImage(named: "icon") {
+            // 优先从 Bundle 中加载自定义的 "icon_tray" 资源 (自动匹配 @2x, 且支持 dark/light 模式)
+            if let customImage = NSImage(named: "icon_tray") {
                 customImage.isTemplate = true
                 button.image = customImage
             } else {

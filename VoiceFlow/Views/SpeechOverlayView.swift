@@ -3,7 +3,7 @@ import Combine
 
 // MARK: - 适配 SwiftUI 的 AppKit 毛玻璃材质组件
 struct VisualEffectView: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .hudWindow
+    var material: NSVisualEffectView.Material = .popover
     var blendingMode: NSVisualEffectView.BlendingMode = .withinWindow
     var state: NSVisualEffectView.State = .active
 
@@ -117,8 +117,8 @@ struct SpeechOverlayView: View {
             // 1. 底层：Siri 风格液态流光融合
             LiquidBackgroundView()
             
-            // 2. 中层：HUD 毛玻璃材质
-            VisualEffectView(material: .hudWindow, blendingMode: .withinWindow, state: .active)
+            // 2. 中层：毛玻璃材质
+            VisualEffectView(material: .popover, blendingMode: .withinWindow, state: .active)
                 .opacity(0.9)
             
             // 3. 内容层

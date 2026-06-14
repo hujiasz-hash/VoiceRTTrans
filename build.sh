@@ -3,7 +3,7 @@
 # 确保脚本发生任何错误时立即停止
 set -e
 
-WORKSPACE="/Users/hujia/Desktop/cla/2026-06_voiceflow"
+WORKSPACE="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="VoiceFlow"
 BUILD_DIR="$WORKSPACE/build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"

@@ -95,6 +95,7 @@ struct LiquidBackgroundView: View {
 struct SpeechOverlayView: View {
     @ObservedObject private var recognizer = SpeechRecognizer.shared
     @ObservedObject private var audioManager = AudioStreamManager.shared
+    @ObservedObject private var monitor = GlobalInputMonitor.shared
     
     @State private var textWidth: CGFloat = 0
     @State private var isOverflowing = false
@@ -137,7 +138,10 @@ struct SpeechOverlayView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 0) {
                             if recognizer.currentText.isEmpty {
-                                Text(recognizer.selectedModel == .senseVoice ? "按住说话，松开即入..." : "正在听取并识别...")
+                                let placeholder = recognizer.selectedModel == .senseVoice 
+                                    ? (monitor.currentMode == .pushToTalk ? "按住说话，松开即入..." : "单击开始，任意键停止...")
+                                    : "正在听取并识别..."
+                                Text(placeholder)
                                     .font(.system(size: 14, weight: .medium, design: .rounded))
                                     .foregroundColor(Color.white.opacity(0.6))
                                     .lineLimit(1)

@@ -29,7 +29,7 @@ enum ModelType: Int, CaseIterable, Codable {
         switch self {
         case .native: return nil
         case .paraformerMini:
-            return URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-small-2024-03-09.tar.bz2")
+            return URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-paraformer-bilingual-zh-en.tar.bz2")
         case .zipformerBilingual:
             return URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2")
         case .senseVoice:
@@ -47,7 +47,7 @@ enum ModelType: Int, CaseIterable, Codable {
     var folderName: String? {
         switch self {
         case .native: return nil
-        case .paraformerMini: return "sherpa-onnx-paraformer-zh-small-2024-03-09"
+        case .paraformerMini: return "sherpa-onnx-streaming-paraformer-bilingual-zh-en"
         case .zipformerBilingual: return "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
         case .senseVoice: return "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
         }
@@ -83,6 +83,7 @@ class SpeechRecognizer: ObservableObject {
     
     // 非流式模型（如 SenseVoice）音频缓存
     private var offlineAudioBuffer: [Float] = []
+    
     
     private init() {
         // 尝试初始化系统内置识别器，默认中文
@@ -145,9 +146,12 @@ class SpeechRecognizer: ObservableObject {
                 self.isRecognizing = false
             }
         case .senseVoice:
+            // 1. 绑定音频流回调，在后台收集完整音频以供最后 SenseVoice 一次性识别
             AudioStreamManager.shared.onAudioBufferReceived = { [weak self] samples in
                 self?.offlineAudioBuffer.append(contentsOf: samples)
             }
+            // 2. 同时启动苹果原生 ASR 作为辅助，在屏幕上显示实时流式字词
+            startNativeRecognition(isRestart: false)
         }
     }
     
@@ -166,7 +170,10 @@ class SpeechRecognizer: ObservableObject {
         } else if finalModel == .senseVoice {
             self.isRecognizing = false
             AudioStreamManager.shared.onAudioBufferReceived = nil
+            // 停止辅助的苹果原生 ASR 引擎
+            stopNativeRecognition()
             
+            // 执行高精度 SenseVoice 识别，并用最终结果覆盖 currentText
             let text = transcribeSenseVoiceOffline()
             self.currentText = text
             completion(text)
@@ -234,6 +241,7 @@ class SpeechRecognizer: ObservableObject {
             guard let self = self else { return }
             
             let isTaskMatch = self.nativeTask != nil && self.nativeTask === currentTask
+            
             print("\n📨 [DIAG-\(taskId)] 回调触发: isTaskMatch=\(isTaskMatch), hasResult=\(result != nil), hasError=\(error != nil), isFinal=\(result?.isFinal ?? false)")
             print("[DIAG-\(taskId)] 回调线程: \(Thread.isMainThread ? "主线程" : "后台线程")")
             print("[DIAG-\(taskId)] isRecognizing=\(self.isRecognizing), isRestartingTask=\(self.isRestartingTask)")
@@ -509,9 +517,18 @@ class SpeechRecognizer: ObservableObject {
     // MARK: - 4. 模型在线按需下载与解压 (Native tar)
     
     func downloadModel(for model: ModelType, completion: @escaping (Bool) -> Void) {
-        guard let url = model.downloadURL, let archiveName = model.archiveName else {
+        guard var url = model.downloadURL, let archiveName = model.archiveName else {
             completion(true)
             return
+        }
+        
+        // 使用 ghfast.top 镜像加速 GitHub 下载，解决国内下载卡住的问题
+        let urlString = url.absoluteString
+        if urlString.contains("github.com") {
+            if let mirrorURL = URL(string: "https://ghfast.top/" + urlString) {
+                url = mirrorURL
+                print("[VoiceFlow] 检测到 GitHub 链接，启用 ghfast.top 镜像加速下载: \(url.absoluteString)")
+            }
         }
         
         let destinationArchive = modelsDirectory.appendingPathComponent(archiveName)
@@ -571,4 +588,5 @@ class SpeechRecognizer: ObservableObject {
         
         progressObserver.resume()
     }
+    
 }

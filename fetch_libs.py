@@ -12,7 +12,7 @@ def run_cmd(cmd, cwd=None):
     return True
 
 def setup_libs():
-    workspace = Path("/Users/hujia/Desktop/cla/2026-06_voiceflow")
+    workspace = Path(__file__).parent.resolve()
     libs_dir = workspace / "libs"
     libs_dir.mkdir(exist_ok=True)
     

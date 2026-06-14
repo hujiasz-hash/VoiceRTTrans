@@ -1,34 +1,6 @@
 import SwiftUI
 import Combine
 
-// MARK: - 适配 SwiftUI 的 AppKit 毛玻璃材质组件
-struct VisualEffectView: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .hudWindow
-    var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
-    var state: NSVisualEffectView.State = .active
-    var cornerRadius: CGFloat = 21
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = state
-        
-        // 显式启用 Layer 并剪裁物理圆角，消灭任何系统可能渲染出来的四角淡色直角框
-        view.wantsLayer = true
-        view.layer?.cornerRadius = cornerRadius
-        view.layer?.masksToBounds = true
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = material
-        nsView.blendingMode = blendingMode
-        nsView.state = state
-        nsView.layer?.cornerRadius = cornerRadius
-    }
-}
-
 // MARK: - 动态宽度溢出渐变淡出蒙版
 struct FadeOutMask: ViewModifier {
     var isOverflowing: Bool
@@ -121,11 +93,21 @@ struct SpeechOverlayView: View {
     
     var body: some View {
         ZStack {
-            // 1. 最底层：AppKit 毛玻璃材质，物理裁剪圆角，混合屏幕背景，提供通透磨砂底色
-            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow, state: .active, cornerRadius: 21)
-            
-            // 2. 中层：Siri 风格液态流光融合（叠在磨砂上方，确保流光可见且不被遮挡）
+            // 1. 最底层：Siri 风格液态流光融合（彩色气泡在最底层流淌，透明度提升，色彩清晰）
             LiquidBackgroundView()
+            
+            // 2. 中层：高档的半透明自适应玻璃卡片背景（纯 SwiftUI 圆角，自适应亮/暗模式，彻底消除直角方形漏角）
+            RoundedRectangle(cornerRadius: 21, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        gradient: Gradient(colors: [
+                            Color(NSColor.windowBackgroundColor).opacity(0.35),
+                            Color(NSColor.windowBackgroundColor).opacity(0.15)
+                        ]),
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
             
             // 3. 内容层
             HStack(spacing: 8) {
@@ -198,12 +180,12 @@ struct SpeechOverlayView: View {
         .frame(width: panelWidth, height: 42)
         .animation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0), value: panelWidth)
         .clipShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
-        .shadow(color: Color.black.opacity(0.3), radius: 8, x: 0, y: 4)
+        .shadow(color: Color.black.opacity(0.15), radius: 8, x: 0, y: 4)
         .overlay(
             RoundedRectangle(cornerRadius: 21, style: .continuous)
                 .stroke(
                     LinearGradient(
-                        gradient: Gradient(colors: [Color.white.opacity(0.3), Color.white.opacity(0.05), Color.clear, Color.white.opacity(0.1)]),
+                        gradient: Gradient(colors: [Color.white.opacity(0.25), Color.white.opacity(0.05), Color.clear, Color.white.opacity(0.15)]),
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),

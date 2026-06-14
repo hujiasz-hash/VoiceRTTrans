@@ -101,11 +101,24 @@ struct SpeechOverlayView: View {
                 .fill(
                     LinearGradient(
                         gradient: Gradient(colors: [
-                            Color(NSColor.windowBackgroundColor).opacity(0.35),
-                            Color(NSColor.windowBackgroundColor).opacity(0.15)
+                            Color(NSColor.windowBackgroundColor).opacity(0.32),
+                            Color(NSColor.windowBackgroundColor).opacity(0.12)
                         ]),
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
+                    )
+                )
+            
+            // 2.5 叠加层：玻璃表面的 3D 线性反射亮面（上半部分高光，营造向光侧的 3D 弧面凸起质感）
+            RoundedRectangle(cornerRadius: 21, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        gradient: Gradient(colors: [
+                            Color.white.opacity(0.18),
+                            Color.white.opacity(0.0)
+                        ]),
+                        startPoint: .top,
+                        endPoint: .bottom
                     )
                 )
             
@@ -180,16 +193,23 @@ struct SpeechOverlayView: View {
         .frame(width: panelWidth, height: 42)
         .animation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0), value: panelWidth)
         .clipShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
-        .shadow(color: Color.black.opacity(0.15), radius: 8, x: 0, y: 4)
+        // 多重环境悬浮投影：大范围弱环境影拉开深度 + 小范围深影固定卡片立体感
+        .shadow(color: Color.black.opacity(0.28), radius: 15, x: 0, y: 10)
+        .shadow(color: Color.black.opacity(0.12), radius: 3, x: 0, y: 2)
         .overlay(
             RoundedRectangle(cornerRadius: 21, style: .continuous)
                 .stroke(
                     LinearGradient(
-                        gradient: Gradient(colors: [Color.white.opacity(0.25), Color.white.opacity(0.05), Color.clear, Color.white.opacity(0.15)]),
+                        gradient: Gradient(colors: [
+                            Color.white.opacity(0.55),  // 左上角的高折射边缘亮高光
+                            Color.white.opacity(0.15),
+                            Color.clear,
+                            Color.white.opacity(0.35)   // 右下角次级微弱反射亮光
+                        ]),
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
-                    lineWidth: 1
+                    lineWidth: 1.5 // 增加描边宽度到 1.5，让玻璃立体反光更为突出
                 )
         )
     }

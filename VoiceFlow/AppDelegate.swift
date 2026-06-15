@@ -88,27 +88,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         
-        var image: NSImage? = nil
-        // 优先尝试从 Bundle 路径读取 PNG
-        if let path = Bundle.main.path(forResource: name, ofType: "png") {
-            image = NSImage(contentsOfFile: path)
-            print("[VoiceFlow] 从 Bundle 路径成功读取: \(path)")
-        }
-        
-        // Fallback 尝试使用 NSImage(named:)
-        if image == nil {
-            image = NSImage(named: name)
-            if image != nil {
-                print("[VoiceFlow] 通过 NSImage(named:) 成功加载: \(name)")
-            }
-        }
-        
-        if let customImage = image {
-            // 关键：对物理分辨率是 64x64 的图片强制指定渲染逻辑大小为 18x18
-            customImage.size = NSSize(width: 18, height: 18)
+        if let customImage = NSImage(named: name) {
+            // 设为 macOS 托盘标准的 22x22 逻辑点，消除 18x18 强制拉伸带来的模糊与尺寸偏小
+            customImage.size = NSSize(width: 22, height: 22)
             customImage.isTemplate = true
             button.image = customImage
-            print("[VoiceFlow] 自定义图标已成功设置到状态栏，并强制设定尺寸为 18x18")
+            print("[VoiceFlow] 自定义图标已成功设置到状态栏，尺寸为 22x22")
         } else {
             print("[VoiceFlow] ⚠️ 加载自定义图标失败，正在退回至 SF Symbols...")
             let fallbackName = name == "icon_tray_recording" ? "mic.circle.fill" : "waveform.circle"
@@ -130,25 +115,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = statusItem?.button {
             print("[VoiceFlow] 成功获取 statusItem.button，开始加载默认图标 'icon_tray'")
             
-            var image: NSImage? = nil
-            // 优先尝试从 Bundle 路径读取 PNG
-            if let path = Bundle.main.path(forResource: "icon_tray", ofType: "png") {
-                image = NSImage(contentsOfFile: path)
-                print("[VoiceFlow] 默认图标从 Bundle 路径加载成功")
-            }
-            
-            if image == nil {
-                image = NSImage(named: "icon_tray")
-                if image != nil {
-                    print("[VoiceFlow] 默认图标通过 NSImage(named:) 加载成功")
-                }
-            }
-            
-            if let customImage = image {
-                customImage.size = NSSize(width: 18, height: 18)
+            if let customImage = NSImage(named: "icon_tray") {
+                customImage.size = NSSize(width: 22, height: 22)
                 customImage.isTemplate = true
                 button.image = customImage
-                print("[VoiceFlow] 默认自定义图标加载并设置成功 (18x18)")
+                print("[VoiceFlow] 默认自定义图标加载并设置成功 (22x22)")
             } else {
                 print("[VoiceFlow] ⚠️ 默认自定义图标加载失败，退回至 SF Symbol 'waveform.circle'...")
                 if let fallbackImage = NSImage(systemSymbolName: "waveform.circle", accessibilityDescription: "VoiceFlow") {

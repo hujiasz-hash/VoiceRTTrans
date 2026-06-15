@@ -67,6 +67,28 @@ class SpeechRecognizer: ObservableObject {
     @Published var isRecognizing: Bool = false
     @Published var selectedModel: ModelType = .native
     
+    // ASR 语言设置：auto, zh, en
+    @Published var selectedLanguage: String = "auto" {
+        didSet {
+            UserDefaults.standard.set(selectedLanguage, forKey: "selectedLanguage")
+            updateNativeRecognizer()
+        }
+    }
+    
+    // ASR 自定义纠偏词典（每行 wrong -> right）
+    @Published var customCorrectionsText: String = "" {
+        didSet {
+            UserDefaults.standard.set(customCorrectionsText, forKey: "customCorrectionsText")
+        }
+    }
+    
+    // 是否开机自启动
+    @Published var launchAtLogin: Bool = false {
+        didSet {
+            updateLaunchAtLoginSetting()
+        }
+    }
+    
     // 下载状态管理
     @Published var downloadProgress: Double = 0.0
     @Published var isDownloading = false
@@ -86,8 +108,73 @@ class SpeechRecognizer: ObservableObject {
     
     
     private init() {
-        // 尝试初始化系统内置识别器，默认中文
-        nativeRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
+        let lang = UserDefaults.standard.string(forKey: "selectedLanguage") ?? "auto"
+        self.selectedLanguage = lang
+        
+        self.customCorrectionsText = UserDefaults.standard.string(forKey: "customCorrectionsText") ?? ""
+        
+        // 检测本地 LaunchAgent 配置文件是否存在，以检测开机自启动真实状态
+        let libraryDir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
+        let plistURL = libraryDir.appendingPathComponent("LaunchAgents/com.hujia.VoiceFlow.plist")
+        self.launchAtLogin = FileManager.default.fileExists(atPath: plistURL.path)
+        
+        let localeId: String
+        switch lang {
+        case "zh": localeId = "zh-CN"
+        case "en": localeId = "en-US"
+        default: localeId = Locale.current.identifier.contains("en") ? "en-US" : "zh-CN"
+        }
+        self.nativeRecognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId))
+    }
+    
+    private func updateNativeRecognizer() {
+        let localeId: String
+        switch selectedLanguage {
+        case "zh": localeId = "zh-CN"
+        case "en": localeId = "en-US"
+        default: localeId = Locale.current.identifier.contains("en") ? "en-US" : "zh-CN"
+        }
+        nativeRecognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId))
+        print("[VoiceFlow] 原生 ASR 语言更新为: \(localeId)")
+    }
+    
+    private var launchAgentPlistURL: URL {
+        let libraryDir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
+        return libraryDir.appendingPathComponent("LaunchAgents/com.hujia.VoiceFlow.plist")
+    }
+    
+    private func updateLaunchAtLoginSetting() {
+        let plistURL = launchAgentPlistURL
+        
+        if launchAtLogin {
+            let bundlePath = Bundle.main.bundlePath
+            let dict: [String: Any] = [
+                "Label": "com.hujia.VoiceFlow",
+                "ProgramArguments": [bundlePath + "/Contents/MacOS/VoiceFlow"],
+                "RunAtLoad": true
+            ]
+            
+            if let data = try? PropertyListSerialization.data(fromPropertyList: dict, format: .xml, options: 0) {
+                let launchAgentsDir = plistURL.deletingLastPathComponent()
+                try? FileManager.default.createDirectory(at: launchAgentsDir, withIntermediateDirectories: true, attributes: nil)
+                
+                do {
+                    try data.write(to: plistURL)
+                    print("[VoiceFlow] 成功开启开机自启动: \(plistURL.path)")
+                } catch {
+                    print("[VoiceFlow] 开启开机自启动失败: \(error.localizedDescription)")
+                }
+            }
+        } else {
+            if FileManager.default.fileExists(atPath: plistURL.path) {
+                do {
+                    try FileManager.default.removeItem(at: plistURL)
+                    print("[VoiceFlow] 成功取消开机自启动")
+                } catch {
+                    print("[VoiceFlow] 取消开机自启动失败: \(error.localizedDescription)")
+                }
+            }
+        }
     }
     
     // MARK: - 模型存储路径管理
@@ -165,7 +252,10 @@ class SpeechRecognizer: ObservableObject {
             stopNativeRecognition()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 print("[DIAG] stopRecognition completion: finalText=\"\(self?.currentText ?? "")\"")
-                completion(self?.currentText ?? "")
+                let rawText = self?.currentText ?? ""
+                self?.recordDictation(rawText) // 记录原始识别日志
+                let correctedText = self?.applyCorrections(to: rawText) ?? rawText
+                completion(correctedText)
             }
         } else if finalModel == .senseVoice {
             self.isRecognizing = false
@@ -175,13 +265,18 @@ class SpeechRecognizer: ObservableObject {
             
             // 执行高精度 SenseVoice 识别，并用最终结果覆盖 currentText
             let text = transcribeSenseVoiceOffline()
-            self.currentText = text
-            completion(text)
+            recordDictation(text) // 记录原始识别日志
+            let corrected = applyCorrections(to: text)
+            self.currentText = corrected
+            completion(corrected)
         } else {
             AudioStreamManager.shared.onAudioBufferReceived = nil
             stopOnlineSherpaRecognizer()
             self.isRecognizing = false
-            completion(self.currentText)
+            let rawText = self.currentText
+            recordDictation(rawText) // 记录原始识别日志
+            let correctedText = applyCorrections(to: rawText)
+            completion(correctedText)
         }
     }
     
@@ -475,7 +570,7 @@ class SpeechRecognizer: ObservableObject {
         
         config.model_config.sense_voice.model = cString(modelPath)
         config.model_config.tokens = cString(tokensPath)
-        config.model_config.sense_voice.language = cString("")
+        config.model_config.sense_voice.language = cString(selectedLanguage)
         config.model_config.sense_voice.use_itn = 1
         
         let recognizer = SherpaOnnxCreateOfflineRecognizer(&config)
@@ -587,6 +682,134 @@ class SpeechRecognizer: ObservableObject {
         }
         
         progressObserver.resume()
+    }
+    
+    func applyCorrections(to text: String) -> String {
+        var processed = text
+        
+        // 1. 系统默认的高频纠偏映射
+        let defaultCorrections: [(String, String)] = [
+            ("openclaw", "open cloud"),
+            ("open claw", "open cloud"),
+            ("clod code", "Claude Code"),
+            ("clode code", "Claude Code"),
+            ("claud code", "Claude Code"),
+            ("cloude code", "Claude Code"),
+            ("claude code", "Claude Code"),
+            ("her agent", "Hermes Agent"),
+            ("hermesagent", "Hermes Agent"),
+            ("hermes agent", "Hermes Agent"),
+            ("hermes-agent", "Hermes Agent"),
+            ("voiceflow", "VoiceFlow"),
+            ("voice flow", "VoiceFlow"),
+            ("github", "GitHub"),
+            ("git commit", "git commit"),
+            ("git push", "git push"),
+            ("chatgpt", "ChatGPT"),
+            ("gpt", "GPT")
+        ]
+        
+        for (wrong, right) in defaultCorrections {
+            processed = processed.replacingOccurrences(of: wrong, with: right, options: [.caseInsensitive])
+        }
+        
+        // 2. 用户自定的纠偏映射，格式为 wrong:right 或者是 wrong->right
+        let lines = customCorrectionsText.components(separatedBy: .newlines)
+        for line in lines {
+            let parts = line.split(separator: ":", maxSplits: 1).map { String($0).trimmingCharacters(in: .whitespaces) }
+            if parts.count == 2 {
+                let wrong = parts[0]
+                let right = parts[1]
+                if !wrong.isEmpty && !right.isEmpty {
+                    processed = processed.replacingOccurrences(of: wrong, with: right, options: [.caseInsensitive])
+                }
+            } else {
+                let arrowParts = line.components(separatedBy: "->").map { $0.trimmingCharacters(in: .whitespaces) }
+                if arrowParts.count == 2 {
+                    let wrong = arrowParts[0]
+                    let right = arrowParts[1]
+                    if !wrong.isEmpty && !right.isEmpty {
+                        processed = processed.replacingOccurrences(of: wrong, with: right, options: [.caseInsensitive])
+                    }
+                }
+            }
+        }
+        
+        // 3. 智能过滤多余的口语语气词 (如：啊、嗯、呀、呃等)
+        processed = removeFillerWords(from: processed)
+        
+        return processed
+    }
+    
+    private func removeFillerWords(from text: String) -> String {
+        var processed = text
+        
+        // 3.1 若整句仅仅是一个语气词本身，予以保留以防完全清空
+        let trimmed = processed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "嗯" || trimmed == "啊" || trimmed == "呀" || trimmed == "呃" || trimmed == "呢" || trimmed == "吧" || trimmed == "哦" {
+            return processed
+        }
+        
+        // 3.2 匹配并去除伴随标点的语气词
+        let patterns = [
+            ("[,，\\s]+(嗯|啊|呀|呃|哦|呢|吧|哈)+[,，\\s]+", "，"), // 句中夹带，收紧为单个逗号
+            ("(嗯|啊|呀|呃|哦|呢|吧|哈)+[.。!！?？]+", "。"),     // 句末语气词直接剔除保留标点
+            ("^\\s*(嗯|啊|呀|呃|哦|呢|吧|哈)+[,，\\s]*", ""),       // 句首语气词直接剥离
+            ("(?<=.)(嗯|啊|呀|呃|哦|呢|吧|哈)(?=.)", "")            // 字与字之间的单音语气词直接干掉
+        ]
+        
+        for (pattern, replacement) in patterns {
+            processed = processed.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
+        }
+        
+        // 3.3 针对特异性双重语气词直接全局替换
+        let simpleWords = ["啊啊", "嗯嗯", "呀呀", "呃呃"]
+        for word in simpleWords {
+            processed = processed.replacingOccurrences(of: word, with: "")
+        }
+        
+        return processed.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    // ASR 原始听写历史日志文件定位
+    var dictationHistoryURL: URL {
+        return modelsDirectory.deletingLastPathComponent().appendingPathComponent("dictation_history.txt")
+    }
+    
+    // 写入听写历史 (记录纠偏前的原始识别结果)
+    func recordDictation(_ text: String) {
+        guard !text.isEmpty else { return }
+        
+        let logURL = dictationHistoryURL
+        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium)
+        let line = "[\(timestamp)] \(text)\n"
+        
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: logURL.path) {
+                if let fileHandle = try? FileHandle(forWritingTo: logURL) {
+                    fileHandle.seekToEndOfFile()
+                    fileHandle.write(data)
+                    fileHandle.closeFile()
+                    print("[VoiceFlow] ASR 听写记录已追加到历史日志中")
+                }
+            } else {
+                do {
+                    try data.write(to: logURL)
+                    print("[VoiceFlow] 首次创建并写入 ASR 听写历史日志")
+                } catch {
+                    print("[VoiceFlow] 写入听写历史失败: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    // 清空听写历史日志
+    func clearDictationHistory() {
+        let logURL = dictationHistoryURL
+        if FileManager.default.fileExists(atPath: logURL.path) {
+            try? FileManager.default.removeItem(at: logURL)
+            print("[VoiceFlow] ASR 听写历史日志已清空")
+        }
     }
     
 }

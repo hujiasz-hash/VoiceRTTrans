@@ -88,6 +88,13 @@ struct SettingsView: View {
                              : "💡 点击热键开始说话，再次点击该键或在键盘上敲击**任何其他按键**立即打字上屏。")
                             .font(.caption)
                             .foregroundColor(.secondary)
+                        
+                        Divider()
+                            .padding(.vertical, 2)
+                        
+                        Toggle("开机自动启动", isOn: $recognizer.launchAtLogin)
+                            .toggleStyle(CheckboxToggleStyle())
+                            .font(.subheadline)
                     }
                     .padding()
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.5))

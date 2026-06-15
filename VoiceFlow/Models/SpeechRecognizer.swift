@@ -82,6 +82,13 @@ class SpeechRecognizer: ObservableObject {
         }
     }
     
+    // 是否开机自启动
+    @Published var launchAtLogin: Bool = false {
+        didSet {
+            updateLaunchAtLoginSetting()
+        }
+    }
+    
     // 下载状态管理
     @Published var downloadProgress: Double = 0.0
     @Published var isDownloading = false
@@ -106,6 +113,11 @@ class SpeechRecognizer: ObservableObject {
         
         self.customCorrectionsText = UserDefaults.standard.string(forKey: "customCorrectionsText") ?? ""
         
+        // 检测本地 LaunchAgent 配置文件是否存在，以检测开机自启动真实状态
+        let libraryDir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
+        let plistURL = libraryDir.appendingPathComponent("LaunchAgents/com.hujia.VoiceFlow.plist")
+        self.launchAtLogin = FileManager.default.fileExists(atPath: plistURL.path)
+        
         let localeId: String
         switch lang {
         case "zh": localeId = "zh-CN"
@@ -124,6 +136,45 @@ class SpeechRecognizer: ObservableObject {
         }
         nativeRecognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId))
         print("[VoiceFlow] 原生 ASR 语言更新为: \(localeId)")
+    }
+    
+    private var launchAgentPlistURL: URL {
+        let libraryDir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
+        return libraryDir.appendingPathComponent("LaunchAgents/com.hujia.VoiceFlow.plist")
+    }
+    
+    private func updateLaunchAtLoginSetting() {
+        let plistURL = launchAgentPlistURL
+        
+        if launchAtLogin {
+            let bundlePath = Bundle.main.bundlePath
+            let dict: [String: Any] = [
+                "Label": "com.hujia.VoiceFlow",
+                "ProgramArguments": [bundlePath + "/Contents/MacOS/VoiceFlow"],
+                "RunAtLoad": true
+            ]
+            
+            if let data = try? PropertyListSerialization.data(fromPropertyList: dict, format: .xml, options: 0) {
+                let launchAgentsDir = plistURL.deletingLastPathComponent()
+                try? FileManager.default.createDirectory(at: launchAgentsDir, withIntermediateDirectories: true, attributes: nil)
+                
+                do {
+                    try data.write(to: plistURL)
+                    print("[VoiceFlow] 成功开启开机自启动: \(plistURL.path)")
+                } catch {
+                    print("[VoiceFlow] 开启开机自启动失败: \(error.localizedDescription)")
+                }
+            }
+        } else {
+            if FileManager.default.fileExists(atPath: plistURL.path) {
+                do {
+                    try FileManager.default.removeItem(at: plistURL)
+                    print("[VoiceFlow] 成功取消开机自启动")
+                } catch {
+                    print("[VoiceFlow] 取消开机自启动失败: \(error.localizedDescription)")
+                }
+            }
+        }
     }
     
     // MARK: - 模型存储路径管理

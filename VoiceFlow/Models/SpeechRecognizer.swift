@@ -684,7 +684,40 @@ class SpeechRecognizer: ObservableObject {
             }
         }
         
+        // 3. 智能过滤多余的口语语气词 (如：啊、嗯、呀、呃等)
+        processed = removeFillerWords(from: processed)
+        
         return processed
+    }
+    
+    private func removeFillerWords(from text: String) -> String {
+        var processed = text
+        
+        // 3.1 若整句仅仅是一个语气词本身，予以保留以防完全清空
+        let trimmed = processed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "嗯" || trimmed == "啊" || trimmed == "呀" || trimmed == "呃" || trimmed == "呢" || trimmed == "吧" || trimmed == "哦" {
+            return processed
+        }
+        
+        // 3.2 匹配并去除伴随标点的语气词
+        let patterns = [
+            ("[,，\\s]+(嗯|啊|呀|呃|哦|呢|吧|哈)+[,，\\s]+", "，"), // 句中夹带，收紧为单个逗号
+            ("(嗯|啊|呀|呃|哦|呢|吧|哈)+[.。!！?？]+", "。"),     // 句末语气词直接剔除保留标点
+            ("^\\s*(嗯|啊|呀|呃|哦|呢|吧|哈)+[,，\\s]*", ""),       // 句首语气词直接剥离
+            ("(?<=.)(嗯|啊|呀|呃|哦|呢|吧|哈)(?=.)", "")            // 字与字之间的单音语气词直接干掉
+        ]
+        
+        for (pattern, replacement) in patterns {
+            processed = processed.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
+        }
+        
+        // 3.3 针对特异性双重语气词直接全局替换
+        let simpleWords = ["啊啊", "嗯嗯", "呀呀", "呃呃"]
+        for word in simpleWords {
+            processed = processed.replacingOccurrences(of: word, with: "")
+        }
+        
+        return processed.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
     // ASR 原始听写历史日志文件定位

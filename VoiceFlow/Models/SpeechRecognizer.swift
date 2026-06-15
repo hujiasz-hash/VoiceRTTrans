@@ -202,6 +202,7 @@ class SpeechRecognizer: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 print("[DIAG] stopRecognition completion: finalText=\"\(self?.currentText ?? "")\"")
                 let rawText = self?.currentText ?? ""
+                self?.recordDictation(rawText) // 记录原始识别日志
                 let correctedText = self?.applyCorrections(to: rawText) ?? rawText
                 completion(correctedText)
             }
@@ -213,6 +214,7 @@ class SpeechRecognizer: ObservableObject {
             
             // 执行高精度 SenseVoice 识别，并用最终结果覆盖 currentText
             let text = transcribeSenseVoiceOffline()
+            recordDictation(text) // 记录原始识别日志
             let corrected = applyCorrections(to: text)
             self.currentText = corrected
             completion(corrected)
@@ -220,7 +222,9 @@ class SpeechRecognizer: ObservableObject {
             AudioStreamManager.shared.onAudioBufferReceived = nil
             stopOnlineSherpaRecognizer()
             self.isRecognizing = false
-            let correctedText = applyCorrections(to: self.currentText)
+            let rawText = self.currentText
+            recordDictation(rawText) // 记录原始识别日志
+            let correctedText = applyCorrections(to: rawText)
             completion(correctedText)
         }
     }
@@ -681,6 +685,47 @@ class SpeechRecognizer: ObservableObject {
         }
         
         return processed
+    }
+    
+    // ASR 原始听写历史日志文件定位
+    var dictationHistoryURL: URL {
+        return modelsDirectory.deletingLastPathComponent().appendingPathComponent("dictation_history.txt")
+    }
+    
+    // 写入听写历史 (记录纠偏前的原始识别结果)
+    func recordDictation(_ text: String) {
+        guard !text.isEmpty else { return }
+        
+        let logURL = dictationHistoryURL
+        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium)
+        let line = "[\(timestamp)] \(text)\n"
+        
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: logURL.path) {
+                if let fileHandle = try? FileHandle(forWritingTo: logURL) {
+                    fileHandle.seekToEndOfFile()
+                    fileHandle.write(data)
+                    fileHandle.closeFile()
+                    print("[VoiceFlow] ASR 听写记录已追加到历史日志中")
+                }
+            } else {
+                do {
+                    try data.write(to: logURL)
+                    print("[VoiceFlow] 首次创建并写入 ASR 听写历史日志")
+                } catch {
+                    print("[VoiceFlow] 写入听写历史失败: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    // 清空听写历史日志
+    func clearDictationHistory() {
+        let logURL = dictationHistoryURL
+        if FileManager.default.fileExists(atPath: logURL.path) {
+            try? FileManager.default.removeItem(at: logURL)
+            print("[VoiceFlow] ASR 听写历史日志已清空")
+        }
     }
     
 }

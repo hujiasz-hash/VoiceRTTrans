@@ -223,6 +223,46 @@ struct SettingsView: View {
                                         RoundedRectangle(cornerRadius: 6)
                                             .stroke(Color.white.opacity(0.1), lineWidth: 1)
                                     )
+                                
+                                HStack(spacing: 8) {
+                                    Button(action: importCorrections) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "square.and.arrow.down")
+                                            Text("导入词典")
+                                        }
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .foregroundColor(.accentColor)
+                                    
+                                    Button(action: exportCorrections) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "square.and.arrow.up")
+                                            Text("导出词典")
+                                        }
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .foregroundColor(.accentColor)
+                                    
+                                    Spacer()
+                                    
+                                    Button(action: exportDictationHistory) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "doc.text")
+                                            Text("导出历史 (给AI)")
+                                        }
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .foregroundColor(.accentColor)
+                                    
+                                    Button(action: clearDictationHistoryConfirm) {
+                                        Image(systemName: "trash")
+                                            .foregroundColor(.red)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .help("清空所有听写历史记录")
+                                }
+                                .font(.caption)
+                                .padding(.top, 6)
                             }
                         }
                         .font(.subheadline)
@@ -301,4 +341,85 @@ struct SettingsView: View {
             }
         }
     }
+    
+    private func importCorrections() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedFileTypes = ["txt"]
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                let content = try String(contentsOf: url, encoding: .utf8)
+                let cleanedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !cleanedContent.isEmpty {
+                    if recognizer.customCorrectionsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        recognizer.customCorrectionsText = cleanedContent
+                    } else {
+                        recognizer.customCorrectionsText += "\n" + cleanedContent
+                    }
+                }
+                print("[VoiceFlow] 成功导入纠偏词典")
+            } catch {
+                print("[VoiceFlow] 导入失败: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    private func exportCorrections() {
+        let panel = NSSavePanel()
+        panel.allowedFileTypes = ["txt"]
+        panel.nameFieldStringValue = "voiceflow_corrections.txt"
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try recognizer.customCorrectionsText.write(to: url, atomically: true, encoding: .utf8)
+                print("[VoiceFlow] 成功导出纠偏词典")
+            } catch {
+                print("[VoiceFlow] 导出失败: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    private func exportDictationHistory() {
+        let logURL = recognizer.dictationHistoryURL
+        guard FileManager.default.fileExists(atPath: logURL.path) else {
+            let alert = NSAlert()
+            alert.messageText = "提示"
+            alert.informativeText = "目前还没有录制过任何听写历史记录。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "确定")
+            alert.runModal()
+            return
+        }
+        
+        let panel = NSSavePanel()
+        panel.allowedFileTypes = ["txt"]
+        panel.nameFieldStringValue = "voiceflow_dictation_history.txt"
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                let content = try String(contentsOf: logURL, encoding: .utf8)
+                try content.write(to: url, atomically: true, encoding: .utf8)
+                print("[VoiceFlow] 成功导出听写历史")
+            } catch {
+                print("[VoiceFlow] 导出听写历史失败: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    private func clearDictationHistoryConfirm() {
+        let alert = NSAlert()
+        alert.messageText = "确认清空"
+        alert.informativeText = "确定要清空所有的原始听写记录日志吗？清空后将无法导出该语料给 AI 分析。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "清空")
+        alert.addButton(withTitle: "取消")
+        
+        if alert.runModal() == .alertFirstButtonReturn {
+            recognizer.clearDictationHistory()
+        }
+    }
+    
 }

@@ -20,7 +20,7 @@ mkdir -p "$APP_DIR/Contents/Resources"
 # 1.5 拷贝本地 icon 资源文件
 if [ -d "$WORKSPACE/icon" ]; then
     echo "🎨 发现本地 icon 目录，正在拷贝图标到 App Resources 目录..."
-    cp "$WORKSPACE/icon/"*.png "$APP_DIR/Contents/Resources/" 2>/dev/null || true
+    cp "$WORKSPACE/icon/"*.png "$WORKSPACE/icon/"*.icns "$APP_DIR/Contents/Resources/" 2>/dev/null || true
 fi
 
 # 2. 编译 Swift 源码
@@ -84,6 +84,8 @@ cat <<EOF > "$APP_DIR/Contents/Info.plist"
     <string>VoiceFlow 需要麦克风权限以捕获音频进行本地语音输入转写。</string>
     <key>LSUIElement</key>
     <string>1</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
 </dict>
 </plist>
 EOF

@@ -145,13 +145,12 @@ struct SettingsView: View {
                                     .font(.subheadline)
                                 Spacer()
                                 Picker("识别语言", selection: $recognizer.selectedLanguage) {
-                                    Text("自动").tag("auto")
-                                    Text("中文").tag("zh")
-                                    Text("英文").tag("en")
+                                    Text("自动/双语 (Auto)").tag("auto")
+                                    Text("中文 (Zh)").tag("zh")
+                                    Text("英文 (En)").tag("en")
                                 }
                                 .pickerStyle(SegmentedPickerStyle())
-                                .labelsHidden()
-                                .frame(width: 200)
+                                .frame(width: 220)
                             }
                             .padding(.top, 4)
                         }
@@ -198,6 +197,36 @@ struct SettingsView: View {
                                 }
                             }
                         }
+                    }
+                    .padding()
+                    .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    )
+                    
+                    // 3.5 ASR 自定义纠偏卡片
+                    VStack(alignment: .leading, spacing: 10) {
+                        DisclosureGroup("ASR 自定义纠偏词典") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("💡 每一行一条规则，格式为：`识别错的词 -> 正确的词`")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .padding(.top, 6)
+                                
+                                TextEditor(text: $recognizer.customCorrectionsText)
+                                    .font(.system(.body, design: .monospaced))
+                                    .frame(height: 80)
+                                    .cornerRadius(6)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                    )
+                            }
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
                     }
                     .padding()
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.5))

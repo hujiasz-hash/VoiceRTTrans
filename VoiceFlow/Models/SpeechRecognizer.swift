@@ -75,6 +75,13 @@ class SpeechRecognizer: ObservableObject {
         }
     }
     
+    // ASR 自定义纠偏词典（每行 wrong -> right）
+    @Published var customCorrectionsText: String = "" {
+        didSet {
+            UserDefaults.standard.set(customCorrectionsText, forKey: "customCorrectionsText")
+        }
+    }
+    
     // 下载状态管理
     @Published var downloadProgress: Double = 0.0
     @Published var isDownloading = false
@@ -96,6 +103,8 @@ class SpeechRecognizer: ObservableObject {
     private init() {
         let lang = UserDefaults.standard.string(forKey: "selectedLanguage") ?? "auto"
         self.selectedLanguage = lang
+        
+        self.customCorrectionsText = UserDefaults.standard.string(forKey: "customCorrectionsText") ?? ""
         
         let localeId: String
         switch lang {
@@ -192,7 +201,9 @@ class SpeechRecognizer: ObservableObject {
             stopNativeRecognition()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 print("[DIAG] stopRecognition completion: finalText=\"\(self?.currentText ?? "")\"")
-                completion(self?.currentText ?? "")
+                let rawText = self?.currentText ?? ""
+                let correctedText = self?.applyCorrections(to: rawText) ?? rawText
+                completion(correctedText)
             }
         } else if finalModel == .senseVoice {
             self.isRecognizing = false
@@ -202,13 +213,15 @@ class SpeechRecognizer: ObservableObject {
             
             // 执行高精度 SenseVoice 识别，并用最终结果覆盖 currentText
             let text = transcribeSenseVoiceOffline()
-            self.currentText = text
-            completion(text)
+            let corrected = applyCorrections(to: text)
+            self.currentText = corrected
+            completion(corrected)
         } else {
             AudioStreamManager.shared.onAudioBufferReceived = nil
             stopOnlineSherpaRecognizer()
             self.isRecognizing = false
-            completion(self.currentText)
+            let correctedText = applyCorrections(to: self.currentText)
+            completion(correctedText)
         }
     }
     
@@ -614,6 +627,60 @@ class SpeechRecognizer: ObservableObject {
         }
         
         progressObserver.resume()
+    }
+    
+    func applyCorrections(to text: String) -> String {
+        var processed = text
+        
+        // 1. 系统默认的高频纠偏映射
+        let defaultCorrections: [(String, String)] = [
+            ("openclaw", "open cloud"),
+            ("open claw", "open cloud"),
+            ("clod code", "Claude Code"),
+            ("clode code", "Claude Code"),
+            ("claud code", "Claude Code"),
+            ("cloude code", "Claude Code"),
+            ("claude code", "Claude Code"),
+            ("her agent", "Hermes Agent"),
+            ("hermesagent", "Hermes Agent"),
+            ("hermes agent", "Hermes Agent"),
+            ("hermes-agent", "Hermes Agent"),
+            ("voiceflow", "VoiceFlow"),
+            ("voice flow", "VoiceFlow"),
+            ("github", "GitHub"),
+            ("git commit", "git commit"),
+            ("git push", "git push"),
+            ("chatgpt", "ChatGPT"),
+            ("gpt", "GPT")
+        ]
+        
+        for (wrong, right) in defaultCorrections {
+            processed = processed.replacingOccurrences(of: wrong, with: right, options: [.caseInsensitive])
+        }
+        
+        // 2. 用户自定的纠偏映射，格式为 wrong:right 或者是 wrong->right
+        let lines = customCorrectionsText.components(separatedBy: .newlines)
+        for line in lines {
+            let parts = line.split(separator: ":", maxSplits: 1).map { String($0).trimmingCharacters(in: .whitespaces) }
+            if parts.count == 2 {
+                let wrong = parts[0]
+                let right = parts[1]
+                if !wrong.isEmpty && !right.isEmpty {
+                    processed = processed.replacingOccurrences(of: wrong, with: right, options: [.caseInsensitive])
+                }
+            } else {
+                let arrowParts = line.components(separatedBy: "->").map { $0.trimmingCharacters(in: .whitespaces) }
+                if arrowParts.count == 2 {
+                    let wrong = arrowParts[0]
+                    let right = arrowParts[1]
+                    if !wrong.isEmpty && !right.isEmpty {
+                        processed = processed.replacingOccurrences(of: wrong, with: right, options: [.caseInsensitive])
+                    }
+                }
+            }
+        }
+        
+        return processed
     }
     
 }

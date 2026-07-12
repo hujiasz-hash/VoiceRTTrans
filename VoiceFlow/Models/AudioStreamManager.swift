@@ -4,7 +4,7 @@ import Combine
 class AudioStreamManager: ObservableObject {
     static let shared = AudioStreamManager()
     
-    private let audioEngine = AVAudioEngine()
+    private var audioEngine = AVAudioEngine()
     private var audioConverter: AVAudioConverter?
     
     // 实时振幅发布给 UI，范围约 0.0 ~ 1.0
@@ -19,7 +19,42 @@ class AudioStreamManager: ObservableObject {
     // 苹果原生 Speech 框架所需要的 PCM Buffer 回调
     var onNativeBufferReceived: ((AVAudioPCMBuffer) -> Void)?
     
-    private init() {}
+    private init() {
+        setupConfigurationNotification()
+    }
+    
+    private func setupConfigurationNotification() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleConfigurationChange),
+            name: .AVAudioEngineConfigurationChange,
+            object: nil
+        )
+    }
+    
+    @objc private func handleConfigurationChange(notification: Notification) {
+        guard let engine = notification.object as? AVAudioEngine, engine === audioEngine else { return }
+        print("[VoiceFlow] 收到 AVAudioEngine 配置变化通知 (AVAudioEngineConfigurationChange)")
+        
+        if isRecording {
+            print("[VoiceFlow] 录音中检测到音频配置变化，强制停止录音")
+            DispatchQueue.main.async {
+                GlobalInputMonitor.shared.forceStopRecording()
+            }
+        }
+        
+        resetAudioEngine()
+    }
+    
+    private func resetAudioEngine() {
+        print("[VoiceFlow] 开始重置 AVAudioEngine...")
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        
+        audioEngine = AVAudioEngine()
+        audioConverter = nil
+        print("[VoiceFlow] AVAudioEngine 重置完成。")
+    }
     
     /// 开始音频捕获
     func startRecording() throws {
@@ -27,6 +62,16 @@ class AudioStreamManager: ObservableObject {
         
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
+        
+        // 增加安全防空校验
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            print("[VoiceFlow] 错误：无效的麦克风格式 (sampleRate: \(inputFormat.sampleRate), channels: \(inputFormat.channelCount))")
+            throw NSError(
+                domain: "AudioStreamManager",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "麦克风未就绪，请稍后再试（可能由于音频设备切换中）"]
+            )
+        }
         
         // 1. 初始化重采样转换器 (从麦克风原生格式如 44.1k/48k 转换为 ASR 的 16k)
         if inputFormat.sampleRate != targetFormat.sampleRate || inputFormat.channelCount != targetFormat.channelCount {
@@ -63,8 +108,14 @@ class AudioStreamManager: ObservableObject {
         }
         
         // 4. 启动音频引擎
-        audioEngine.prepare()
-        try audioEngine.start()
+        do {
+            audioEngine.prepare()
+            try audioEngine.start()
+        } catch {
+            print("[VoiceFlow] 启动音频引擎失败: \(error)，进行引擎重置。")
+            resetAudioEngine()
+            throw error
+        }
         
         DispatchQueue.main.async {
             self.isRecording = true
@@ -102,15 +153,24 @@ class AudioStreamManager: ObservableObject {
         }
         
         // 执行重采样转换
+        guard buffer.format.sampleRate > 0 else { return }
         let ratio = targetFormat.sampleRate / buffer.format.sampleRate
         let targetFrameCapacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 10)
         
         guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: targetFrameCapacity) else { return }
         
         var error: NSError? = nil
+        var isInputStreamEmpty = false
+        
         let inputBlock: AVAudioConverterInputBlock = { inNumPackets, outStatus in
-            outStatus.pointee = .haveData
-            return buffer
+            if isInputStreamEmpty {
+                outStatus.pointee = .noDataNow
+                return nil
+            } else {
+                outStatus.pointee = .haveData
+                isInputStreamEmpty = true
+                return buffer
+            }
         }
         
         let status = audioConverter?.convert(to: outputBuffer, error: &error, withInputFrom: inputBlock)

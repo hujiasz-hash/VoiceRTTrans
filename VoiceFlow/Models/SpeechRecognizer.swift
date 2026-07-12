@@ -65,7 +65,11 @@ class SpeechRecognizer: ObservableObject {
     
     @Published var currentText: String = ""
     @Published var isRecognizing: Bool = false
-    @Published var selectedModel: ModelType = .native
+    @Published var selectedModel: ModelType {
+        didSet {
+            UserDefaults.standard.set(selectedModel.rawValue, forKey: "VoiceFlow_selectedModel")
+        }
+    }
     
     // 下载状态管理
     @Published var downloadProgress: Double = 0.0
@@ -86,6 +90,10 @@ class SpeechRecognizer: ObservableObject {
     
     
     private init() {
+        let savedModelRaw = UserDefaults.standard.integer(forKey: "VoiceFlow_selectedModel")
+        let savedModel = ModelType(rawValue: savedModelRaw) ?? .native
+        self._selectedModel = Published(initialValue: savedModel)
+        
         // 尝试初始化系统内置识别器，默认中文
         nativeRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
     }

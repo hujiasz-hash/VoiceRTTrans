@@ -17,12 +17,24 @@ class GlobalInputMonitor: ObservableObject {
     static let shared = GlobalInputMonitor()
     
     // 全局配置参数 (响应式发布，支持 UI 双向绑定)
-    @Published var currentMode: RecordingMode = .toggleOrAnyKeyStop
+    @Published var currentMode: RecordingMode {
+        didSet {
+            UserDefaults.standard.set(currentMode.rawValue, forKey: "VoiceFlow_recordingMode")
+        }
+    }
     
     // 默认热键配置：Option (Carbon 键码: 58 (左Option) / 61 (右Option))
     // 默认使用右 Option (键码 61) 作为热键
-    @Published var hotkeyKeyCode: UInt16 = 61
-    @Published var hotkeyFlags: CGEventFlags = [.maskAlternate]
+    @Published var hotkeyKeyCode: UInt16 {
+        didSet {
+            UserDefaults.standard.set(hotkeyKeyCode, forKey: "VoiceFlow_hotkeyKeyCode")
+        }
+    }
+    @Published var hotkeyFlags: CGEventFlags {
+        didSet {
+            UserDefaults.standard.set(hotkeyFlags.rawValue, forKey: "VoiceFlow_hotkeyFlags")
+        }
+    }
     
     // 是否为纯修饰键（如 Option, Command, Control, Shift）
     private var isModifierOnlyHotkey: Bool {
@@ -47,7 +59,26 @@ class GlobalInputMonitor: ObservableObject {
     private var swallowedKeyCode: UInt16? = nil
     private var isSwallowedKeyModifier = false
     
-    private init() {}
+    private init() {
+        if let savedModeRaw = UserDefaults.standard.value(forKey: "VoiceFlow_recordingMode") as? Int,
+           let savedMode = RecordingMode(rawValue: savedModeRaw) {
+            self._currentMode = Published(initialValue: savedMode)
+        } else {
+            self._currentMode = Published(initialValue: .toggleOrAnyKeyStop)
+        }
+        
+        if let savedCode = UserDefaults.standard.value(forKey: "VoiceFlow_hotkeyKeyCode") as? UInt16 {
+            self._hotkeyKeyCode = Published(initialValue: savedCode)
+        } else {
+            self._hotkeyKeyCode = Published(initialValue: 61)
+        }
+        
+        if let savedFlags = UserDefaults.standard.value(forKey: "VoiceFlow_hotkeyFlags") as? UInt64 {
+            self._hotkeyFlags = Published(initialValue: CGEventFlags(rawValue: savedFlags))
+        } else {
+            self._hotkeyFlags = Published(initialValue: [.maskAlternate])
+        }
+    }
     
     /// 检查并检测辅助功能权限
     func checkAccessibilityPermissions(promptUser: Bool) -> Bool {
@@ -287,6 +318,14 @@ class GlobalInputMonitor: ObservableObject {
         state = .idle
         DispatchQueue.main.async { [weak self] in
             self?.onStopRecording?()
+        }
+    }
+    
+    /// 强制停止当前录音状态（例如在音频流或者硬件设备配置改变时）
+    func forceStopRecording() {
+        print("[VoiceFlow] 全局输入监听器被强制停止录音状态")
+        if case .recording = state {
+            triggerStop()
         }
     }
 }

@@ -65,7 +65,11 @@ class SpeechRecognizer: ObservableObject {
     
     @Published var currentText: String = ""
     @Published var isRecognizing: Bool = false
-    @Published var selectedModel: ModelType = .native
+    @Published var selectedModel: ModelType {
+        didSet {
+            UserDefaults.standard.set(selectedModel.rawValue, forKey: "VoiceFlow_selectedModel")
+        }
+    }
     
     // ASR 语言设置：auto, zh, en
     @Published var selectedLanguage: String = "auto" {
@@ -117,6 +121,10 @@ class SpeechRecognizer: ObservableObject {
         let libraryDir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
         let plistURL = libraryDir.appendingPathComponent("LaunchAgents/com.hujia.VoiceFlow.plist")
         self.launchAtLogin = FileManager.default.fileExists(atPath: plistURL.path)
+        
+        let savedModelRaw = UserDefaults.standard.integer(forKey: "VoiceFlow_selectedModel")
+        let savedModel = ModelType(rawValue: savedModelRaw) ?? .native
+        self._selectedModel = Published(initialValue: savedModel)
         
         let localeId: String
         switch lang {
